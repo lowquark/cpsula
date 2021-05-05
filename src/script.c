@@ -21,8 +21,8 @@ struct scr_env {
 struct scr_reqhandler {
   struct scr_env * env;
   struct scr_reqhandler * next;
-  int status;
   int result_ref;
+  int chunkcb_ref;
 };
 
 int pcall_debug_traceback(lua_State * L, int narg, int nret) {
@@ -102,8 +102,8 @@ scr_reqhandler * scr_reqhandler_new(scr_env * env) {
   handler->env = env;
   handler->next = env->handlers;
   env->handlers = handler;
-  handler->status = SCR_REQHANDLER_SUSPENDED;
   handler->result_ref = LUA_REFNIL;
+  handler->chunkcb_ref = LUA_REFNIL;
 
   return handler;
 }
@@ -115,6 +115,7 @@ void scr_reqhandler_free(scr_reqhandler * handler) {
 
     // Unref lua reference
     luaL_unref(handler->env->L, LUA_REGISTRYINDEX, handler->result_ref);
+    luaL_unref(handler->env->L, LUA_REGISTRYINDEX, handler->chunkcb_ref);
 
     // Remove from environment
     scr_reqhandler ** slot = &handler->env->handlers;
@@ -131,7 +132,11 @@ void scr_reqhandler_free(scr_reqhandler * handler) {
 }
 
 int scr_reqhandler_status(scr_reqhandler * handler) {
-  return handler->status;
+  if(handler->chunkcb_ref == LUA_REFNIL) {
+    return SCR_REQHANDLER_DEAD;
+  } else {
+    return SCR_REQHANDLER_SUSPENDED;
+  }
 }
 
 const char * scr_reqhandler_result(scr_reqhandler * handler, size_t * length) {
@@ -157,11 +162,11 @@ const char * scr_reqhandler_result(scr_reqhandler * handler, size_t * length) {
   return NULL;
 }
 
-int scr_reqhandler_execute(scr_reqhandler * handler,
-                           const char * authority,
-                           const char * resource, 
-                           const char * fingerprint, 
-                           time_t expiry) {
+void scr_reqhandler_execute(scr_reqhandler * handler,
+                            const char * authority,
+                            const char * resource,
+                            const char * fingerprint,
+                            time_t expiry) {
   struct scr_env * env;
   int return_type;
 
@@ -190,10 +195,12 @@ int scr_reqhandler_execute(scr_reqhandler * handler,
       return_type = lua_type(env->L, -1);
 
       if(return_type == LUA_TSTRING || return_type == LUA_TNUMBER) {
-        handler->status = SCR_REQHANDLER_DEAD;
         handler->result_ref = luaL_ref(env->L, LUA_REGISTRYINDEX);
+      } else if(return_type == LUA_TFUNCTION) {
+        handler->chunkcb_ref = luaL_ref(env->L, LUA_REGISTRYINDEX);
+
+        scr_reqhandler_continue(handler);
       } else {
-        handler->status = SCR_REQHANDLER_DEAD;
         handler->result_ref = LUA_REFNIL;
         lua_pop(env->L, 1); // return value
       }
@@ -205,11 +212,49 @@ int scr_reqhandler_execute(scr_reqhandler * handler,
   }
 
   assert(lua_gettop(env->L) == 0);
-
-  return SCR_REQHANDLER_DEAD;
 }
 
-int scr_reqhandler_continue(scr_reqhandler * handler) {
-  return SCR_REQHANDLER_DEAD;
+void scr_reqhandler_continue(scr_reqhandler * handler) {
+  struct scr_env * env;
+  int return_type;
+
+  assert(handler);
+
+  env = handler->env;
+
+  assert(env);
+
+  if(handler->chunkcb_ref != LUA_REFNIL) {
+    // Set last result to nil
+    luaL_unref(handler->env->L, LUA_REGISTRYINDEX, handler->result_ref);
+    handler->result_ref = LUA_REFNIL;
+
+    // Push/call chunk callback
+    lua_rawgeti(env->L, LUA_REGISTRYINDEX, handler->chunkcb_ref);
+    if(pcall_debug_traceback(env->L, 0, 1) == LUA_OK) {
+      return_type = lua_type(env->L, -1);
+
+      if(return_type == LUA_TSTRING || return_type == LUA_TNUMBER) {
+        // Set result to return value
+        handler->result_ref = luaL_ref(env->L, LUA_REGISTRYINDEX);
+      } else {
+        // Ignore return value
+        lua_pop(env->L, 1);
+        // Unset chunk callback
+        luaL_unref(handler->env->L, LUA_REGISTRYINDEX, handler->chunkcb_ref);
+        handler->chunkcb_ref = LUA_REFNIL;
+      }
+    } else {
+      // Notify error
+      log_error("Lua error while executing chunk callback");
+      log_info("%s", lua_tostring(env->L, -1));
+      lua_pop(env->L, 1);
+      // Unset chunk callback
+      luaL_unref(handler->env->L, LUA_REGISTRYINDEX, handler->chunkcb_ref);
+      handler->chunkcb_ref = LUA_REFNIL;
+    }
+  }
+
+  assert(lua_gettop(env->L) == 0);
 }
 

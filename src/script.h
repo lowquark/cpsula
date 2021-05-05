@@ -20,12 +20,12 @@ int scr_reqhandler_status(scr_reqhandler * handler);
 
 const char * scr_reqhandler_result(scr_reqhandler * handler, size_t * length);
 
-int scr_reqhandler_execute(scr_reqhandler * handler,
-                           const char * authority,
-                           const char * resource, 
-                           const char * fingerprint, 
-                           time_t expiry);
+void scr_reqhandler_execute(scr_reqhandler * handler,
+                            const char * authority,
+                            const char * resource,
+                            const char * fingerprint,
+                            time_t expiry);
 
-int scr_reqhandler_continue(scr_reqhandler * handler);
+void scr_reqhandler_continue(scr_reqhandler * handler);
 
 #endif
