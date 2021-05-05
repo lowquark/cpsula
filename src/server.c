@@ -1,7 +1,7 @@
 
 #include <log.h>
 #include <server.h>
-#include <script.h>
+#include <luaenv.h>
 #include <uri_parser.h>
 
 #include <event2/bufferevent_ssl.h>
@@ -65,7 +65,7 @@ struct server_context {
   struct evconnlistener * listener;
 
   // Lua environment object
-  struct scr_env * script_env;
+  struct luaenv_context * script_env;
 };
 
 struct client_context {
@@ -83,7 +83,7 @@ struct client_context {
   size_t rx_buffer_size;
 
   // Lua request handler
-  struct scr_reqhandler * script_request_handler;
+  struct luaenv_request * script_request_handler;
 };
 
 static char nyble_ascii(unsigned int nyble) {
@@ -156,7 +156,7 @@ static void destroy_client(struct client_context * client_context) {
   // Note: This also frees the SSL connection object
   bufferevent_free(client_context->buffer_event);
 
-  scr_reqhandler_free(client_context->script_request_handler);
+  luaenv_request_free(client_context->script_request_handler);
 
   memset(client_context, 0, sizeof(*client_context));
   free(client_context);
@@ -202,7 +202,7 @@ static void xbufferevent_write_str(struct bufferevent * bufev, const char * str)
   bufferevent_write(bufev, str, strlen(str));
 }
 
-// Commences the server response by executing the script's request handler with the given URI and
+// Commences the server response by executing the luaenv request handler with the given URI and
 // optional certificate information. If no data is returned, closes the connection. Otherwise,
 // writes the resultant data chunk to the client's bufferevent object.
 static void client_execute_response(struct client_context * client,
@@ -228,16 +228,16 @@ static void client_execute_response(struct client_context * client,
   }
 
   assert(!client->script_request_handler);
-  client->script_request_handler = scr_reqhandler_new(client->server_context->script_env);
+  client->script_request_handler = luaenv_request_new(client->server_context->script_env);
 
-  scr_reqhandler_execute(client->script_request_handler,
+  luaenv_request_execute(client->script_request_handler,
                          uri_address,
                          uri_path,
                          cert_digest,
                          cert_expiry);
 
   size_t len;
-  const char * str = scr_reqhandler_result(client->script_request_handler, &len);
+  const char * str = luaenv_request_result(client->script_request_handler, &len);
   if(str) {
     bufferevent_write(client->buffer_event, str, len);
   } else {
@@ -246,17 +246,17 @@ static void client_execute_response(struct client_context * client,
   }
 }
 
-// Queries the script's request handler for more response data. Writes the result to the client's
+// Queries the luaenv request handler for more response data. Writes the result to the client's
 // bufferevent object. If no data is returned, closes the connection. Otherwise, writes the
 // resultant data chunk to the client's bufferevent object.
 static void client_continue_response(struct client_context * client) {
   assert(client);
   assert(client->script_request_handler);
 
-  scr_reqhandler_continue(client->script_request_handler);
+  luaenv_request_continue(client->script_request_handler);
 
   size_t len;
-  const char * str = scr_reqhandler_result(client->script_request_handler, &len);
+  const char * str = luaenv_request_result(client->script_request_handler, &len);
   if(str) {
     bufferevent_write(client->buffer_event, str, len);
   } else {
@@ -315,11 +315,11 @@ static void client_writecb(struct bufferevent * buffer_event, void * user_data) 
   client = (struct client_context *)user_data;
 
   if(client->script_request_handler) {
-    int status = scr_reqhandler_status(client->script_request_handler);
+    int status = luaenv_request_status(client->script_request_handler);
 
-    if(status == SCR_REQHANDLER_SUSPENDED) {
+    if(status == LUAENV_REQUEST_SUSPENDED) {
       client_continue_response(client);
-    } else if(status == SCR_REQHANDLER_DEAD) {
+    } else if(status == LUAENV_REQUEST_DEAD) {
       destroy_client(client);
       client = NULL;
     }
@@ -500,7 +500,7 @@ void server_init(struct event_base * event_base) {
 
   global_server_context->event_base = event_base;
 
-  global_server_context->script_env = scr_env_new();
+  global_server_context->script_env = luaenv_context_new();
 
   struct sockaddr_in sin = {0};
   sin.sin_family = AF_INET;
@@ -522,7 +522,7 @@ void server_init(struct event_base * event_base) {
 }
 
 void server_deinit() {
-  scr_env_free(global_server_context->script_env);
+  luaenv_context_free(global_server_context->script_env);
   global_server_context->script_env = NULL;
 
   SSL_CTX_free(global_server_context->ssl_context);

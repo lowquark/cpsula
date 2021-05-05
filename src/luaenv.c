@@ -1,6 +1,6 @@
 
 #include <log.h>
-#include <script.h>
+#include <luaenv.h>
 
 #include <lua.h>
 #include <lualib.h>
@@ -12,15 +12,15 @@
 
 const char * main_file = "main.lua";
 
-struct scr_env {
+struct luaenv_context {
   lua_State * L;
-  scr_reqhandler * handlers;
+  luaenv_request * handlers;
   int handler_fn_ref;
 };
 
-struct scr_reqhandler {
-  struct scr_env * env;
-  struct scr_reqhandler * next;
+struct luaenv_request {
+  struct luaenv_context * env;
+  struct luaenv_request * next;
   int result_ref;
   int chunkcb_ref;
 };
@@ -45,10 +45,10 @@ int pcall_debug_traceback(lua_State * L, int narg, int nret) {
   return rval;
 }
 
-scr_env * scr_env_new() {
-  struct scr_env * env;
+luaenv_context * luaenv_context_new() {
+  struct luaenv_context * env;
 
-  env = calloc(sizeof(struct scr_env), 1);
+  env = calloc(sizeof(struct luaenv_context), 1);
   env->L = luaL_newstate();
   env->handler_fn_ref = LUA_NOREF;
 
@@ -76,15 +76,15 @@ scr_env * scr_env_new() {
   return env;
 }
 
-void scr_env_free(scr_env * env) {
+void luaenv_context_free(luaenv_context * env) {
   if(env) {
     lua_close(env->L);
 
-    struct scr_reqhandler * handler = env->handlers;
+    struct luaenv_request * handler = env->handlers;
 
     while(handler) {
-      struct scr_reqhandler * next = handler->next;
-      scr_reqhandler_free(handler);
+      struct luaenv_request * next = handler->next;
+      luaenv_request_free(handler);
       handler = next;
     }
 
@@ -93,12 +93,12 @@ void scr_env_free(scr_env * env) {
   }
 }
 
-scr_reqhandler * scr_reqhandler_new(scr_env * env) {
-  struct scr_reqhandler * handler;
+luaenv_request * luaenv_request_new(luaenv_context * env) {
+  struct luaenv_request * handler;
 
   assert(env);
 
-  handler = calloc(sizeof(struct scr_reqhandler), 1);
+  handler = calloc(sizeof(struct luaenv_request), 1);
   handler->env = env;
   handler->next = env->handlers;
   env->handlers = handler;
@@ -108,7 +108,7 @@ scr_reqhandler * scr_reqhandler_new(scr_env * env) {
   return handler;
 }
 
-void scr_reqhandler_free(scr_reqhandler * handler) {
+void luaenv_request_free(luaenv_request * handler) {
   if(handler) {
     assert(handler->env);
     assert(handler->env->L);
@@ -118,7 +118,7 @@ void scr_reqhandler_free(scr_reqhandler * handler) {
     luaL_unref(handler->env->L, LUA_REGISTRYINDEX, handler->chunkcb_ref);
 
     // Remove from environment
-    scr_reqhandler ** slot = &handler->env->handlers;
+    luaenv_request ** slot = &handler->env->handlers;
     while(*slot && *slot != handler) {
       slot = &(*slot)->next;
     }
@@ -131,43 +131,12 @@ void scr_reqhandler_free(scr_reqhandler * handler) {
   }
 }
 
-int scr_reqhandler_status(scr_reqhandler * handler) {
-  if(handler->chunkcb_ref == LUA_REFNIL) {
-    return SCR_REQHANDLER_DEAD;
-  } else {
-    return SCR_REQHANDLER_SUSPENDED;
-  }
-}
-
-const char * scr_reqhandler_result(scr_reqhandler * handler, size_t * length) {
-  struct scr_env * env;
-  const char * result_str;
-
-  assert(handler);
-  assert(length);
-
-  env = handler->env;
-
-  if(handler->result_ref != LUA_REFNIL) {
-    lua_rawgeti(env->L, LUA_REGISTRYINDEX, handler->result_ref);
-    result_str = lua_tolstring(env->L, -1, length);
-    lua_pop(env->L, 1); // result string
-
-    assert(lua_gettop(env->L) == 0);
-
-    return result_str;
-  }
-
-  *length = 0;
-  return NULL;
-}
-
-void scr_reqhandler_execute(scr_reqhandler * handler,
+void luaenv_request_execute(luaenv_request * handler,
                             const char * authority,
                             const char * resource,
                             const char * fingerprint,
                             time_t expiry) {
-  struct scr_env * env;
+  struct luaenv_context * env;
   int return_type;
 
   assert(handler);
@@ -203,7 +172,7 @@ void scr_reqhandler_execute(scr_reqhandler * handler,
         // Set chunk callback to return value
         handler->chunkcb_ref = luaL_ref(env->L, LUA_REGISTRYINDEX);
         // Call the chunk callback to produce first value
-        scr_reqhandler_continue(handler);
+        luaenv_request_continue(handler);
       } else {
         if(return_type != LUA_TNIL) {
           log_warning(
@@ -223,8 +192,8 @@ void scr_reqhandler_execute(scr_reqhandler * handler,
   assert(lua_gettop(env->L) == 0);
 }
 
-void scr_reqhandler_continue(scr_reqhandler * handler) {
-  struct scr_env * env;
+void luaenv_request_continue(luaenv_request * handler) {
+  struct luaenv_context * env;
   int return_type;
 
   assert(handler);
@@ -272,5 +241,36 @@ void scr_reqhandler_continue(scr_reqhandler * handler) {
   }
 
   assert(lua_gettop(env->L) == 0);
+}
+
+int luaenv_request_status(luaenv_request * handler) {
+  if(handler->chunkcb_ref == LUA_REFNIL) {
+    return LUAENV_REQUEST_DEAD;
+  } else {
+    return LUAENV_REQUEST_SUSPENDED;
+  }
+}
+
+const char * luaenv_request_result(luaenv_request * handler, size_t * length) {
+  struct luaenv_context * env;
+  const char * result_str;
+
+  assert(handler);
+  assert(length);
+
+  env = handler->env;
+
+  if(handler->result_ref != LUA_REFNIL) {
+    lua_rawgeti(env->L, LUA_REGISTRYINDEX, handler->result_ref);
+    result_str = lua_tolstring(env->L, -1, length);
+    lua_pop(env->L, 1); // result string
+
+    assert(lua_gettop(env->L) == 0);
+
+    return result_str;
+  }
+
+  *length = 0;
+  return NULL;
 }
 
