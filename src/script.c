@@ -77,18 +77,20 @@ scr_env * scr_env_new() {
 }
 
 void scr_env_free(scr_env * env) {
-  lua_close(env->L);
+  if(env) {
+    lua_close(env->L);
 
-  struct scr_reqhandler * handler = env->handlers;
+    struct scr_reqhandler * handler = env->handlers;
 
-  while(handler) {
-    struct scr_reqhandler * next = handler->next;
-    scr_reqhandler_free(handler);
-    handler = next;
+    while(handler) {
+      struct scr_reqhandler * next = handler->next;
+      scr_reqhandler_free(handler);
+      handler = next;
+    }
+
+    memset(env, 0, sizeof(*env));
+    free(env);
   }
-
-  memset(env, 0, sizeof(*env));
-  free(env);
 }
 
 scr_reqhandler * scr_reqhandler_new(scr_env * env) {
@@ -107,23 +109,29 @@ scr_reqhandler * scr_reqhandler_new(scr_env * env) {
 }
 
 void scr_reqhandler_free(scr_reqhandler * handler) {
-  assert(handler->env);
-  assert(handler->env->L);
+  if(handler) {
+    assert(handler->env);
+    assert(handler->env->L);
 
-  // Unref lua reference
-  luaL_unref(handler->env->L, LUA_REGISTRYINDEX, handler->result_ref);
+    // Unref lua reference
+    luaL_unref(handler->env->L, LUA_REGISTRYINDEX, handler->result_ref);
 
-  // Remove from environment
-  scr_reqhandler ** slot = &handler->env->handlers;
-  while(*slot && *slot != handler) {
-    slot = &(*slot)->next;
+    // Remove from environment
+    scr_reqhandler ** slot = &handler->env->handlers;
+    while(*slot && *slot != handler) {
+      slot = &(*slot)->next;
+    }
+    assert(*slot);
+    *slot = handler->next;
+
+    // Clear and free
+    memset(handler, 0, sizeof(*handler));
+    free(handler);
   }
-  assert(*slot);
-  *slot = handler->next;
+}
 
-  // Clear and free
-  memset(handler, 0, sizeof(*handler));
-  free(handler);
+int scr_reqhandler_status(scr_reqhandler * handler) {
+  return handler->status;
 }
 
 const char * scr_reqhandler_result(scr_reqhandler * handler, size_t * length) {

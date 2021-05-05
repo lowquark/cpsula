@@ -16,6 +16,8 @@ void scr_env_free(scr_env * base);
 scr_reqhandler * scr_reqhandler_new(scr_env * base);
 void scr_reqhandler_free(scr_reqhandler * handler);
 
+int scr_reqhandler_status(scr_reqhandler * handler);
+
 const char * scr_reqhandler_result(scr_reqhandler * handler, size_t * length);
 
 int scr_reqhandler_execute(scr_reqhandler * handler,

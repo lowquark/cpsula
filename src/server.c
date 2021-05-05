@@ -11,7 +11,7 @@
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
 
-#include <errno.h>
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +26,7 @@
 
 static const unsigned short gemini_port = 1965;
 
-static const char allowed_ciphers[] = 
+static const char gemini_allowed_ciphers[] = 
   "ECDHE-ECDSA-AES128-GCM-SHA256:"
   "ECDHE-RSA-AES128-GCM-SHA256:"
   "ECDHE-ECDSA-AES256-GCM-SHA384:"
@@ -39,33 +39,54 @@ static const char allowed_ciphers[] =
   "TLS_AES_256_GCM_SHA384:"
   "TLS_CHACHA20_POLY1305_SHA256";
 
+static const int gemini_min_protocol_version = TLS1_2_VERSION;
+
+// TODO: Create a config module
 static const char certificate_file_path[] = "./cert";
 static const char private_key_file_path[] = "./pkey";
 
-static const int min_protocol_version = TLS1_2_VERSION;
+#define CLIENT_MAX_REQUEST_SIZE (1026)
 
-#define MAX_REQUEST_SIZE (1026)
-static const size_t max_request_size = MAX_REQUEST_SIZE;
+static const char err_header_59_size_exceeded[] = "59 Request size limit exceeded.\r\n";
+static const char err_header_59_malformed_uri[] = "59 Malformed URI.\r\n";
+static const char err_header_62_not_yet_valid[] = "62 Not yet valid.\r\n";
+static const char err_header_62_expired[]       = "62 Expired.\r\n";
 
-static const char maximum_request_size_response_str[] = "59 Request size limit exceeded.\r\n";
+#define LITERAL_AND_LENGTH(x) x, strlen(x)
 
 struct server_context {
+  // SSL context object
   SSL_CTX * ssl_context;
+
+  // Top level libevent loop object
   struct event_base * event_base;
+
+  // libevent listener object governing accept callback
   struct evconnlistener * listener;
+
+  // Lua environment object
   struct scr_env * script_env;
 };
 
 struct client_context {
+  // Pointer to parent server
   struct server_context * server_context;
+
+  // SSL peer connection object
   SSL * ssl_connection;
+
+  // libevent buffer object governing read/write/event callbacks
   struct bufferevent * buffer_event;
-  char request_buffer[MAX_REQUEST_SIZE];
-  size_t request_size;
+
+  // Simple buffer for the entire client request
+  char rx_buffer[CLIENT_MAX_REQUEST_SIZE];
+  size_t rx_buffer_size;
+
+  // Lua request handler
   struct scr_reqhandler * script_request_handler;
 };
 
-static const char nyble_ascii(unsigned int nyble) {
+static char nyble_ascii(unsigned int nyble) {
   if(nyble <= 0x9) {
     return '0'+nyble;
   }
@@ -75,7 +96,13 @@ static const char nyble_ascii(unsigned int nyble) {
   return '\0';
 }
 
-static int compute_X509_digest(char (*sha1_hex_out)[41], X509 * x509) {
+// Computes SHA-1 digest from the X509 certificate, and writes its ASCII/hex representation to
+// sha1_hex_out. This can be verified via the following command:
+//
+// $ openssl x509 -noout -in cert -fingerprint -serial
+//
+// Returns 0 on success, and 1 if the SSL library fails somehow.
+static int compute_X509_digest(char (*sha1_hex_out)[41], const X509 * x509) {
   const EVP_MD * sha1 = EVP_get_digestbyname("sha1");
   if(!sha1) {
     log_warning("EVP_get_digestbyname() failed");
@@ -105,10 +132,19 @@ static int compute_X509_digest(char (*sha1_hex_out)[41], X509 * x509) {
   return 0;
 }
 
-static time_t compute_X509_expiry(X509 * x509) {
+// Computes a GMT, POSIX timestamp from the unwieldy formats in the X509 certificate
+static int compute_X509_expiry(time_t * expiry, const X509 * x509) {
   struct tm time_tm;
-  ASN1_TIME_to_tm(X509_get0_notAfter(x509), &time_tm);
-  return mktime(&time_tm);
+
+  assert(expiry);
+  assert(x509);
+
+  if(ASN1_TIME_to_tm(X509_get0_notAfter(x509), &time_tm)) {
+    *expiry = mktime(&time_tm);
+    return 0;
+  } else {
+    return 1;
+  }
 }
 
 static struct client_context * create_client() {
@@ -116,113 +152,194 @@ static struct client_context * create_client() {
 }
 
 static void destroy_client(struct client_context * client_context) {
-  // The SSL connection is owned by this buffer event
+  // Note: This also frees the SSL connection object
   bufferevent_free(client_context->buffer_event);
+
   scr_reqhandler_free(client_context->script_request_handler);
+
   memset(client_context, 0, sizeof(*client_context));
   free(client_context);
 }
 
+// Reads as many bytes from the input buffer as possible, and stores them in the client's request
+// buffer.
+static void client_read_bytes(struct client_context * client, struct evbuffer * input_buf) {
+  assert(client);
+  assert(input_buf);
+
+  size_t read_size = evbuffer_get_length(input_buf);
+  size_t rx_free = CLIENT_MAX_REQUEST_SIZE - client->rx_buffer_size;
+
+  if(read_size > rx_free) {
+    read_size = rx_free;
+  }
+
+  evbuffer_remove(input_buf, client->rx_buffer + client->rx_buffer_size, read_size);
+  client->rx_buffer_size += read_size;
+}
+
+// If <CR><LF> is found in the buffer, sets *req_size_out to the number of preceeding bytes and
+// returns 1.
+// Otherwise, returns 0.
+static int request_ready(const char * buf, size_t buf_size, size_t * req_size_out) {
+  if(!buf || buf_size == 0) {
+    return 0;
+  }
+  for(size_t i = 0 ; i < buf_size - 1 ; ++i) {
+    if(buf[i] == '\r' && buf[i + 1] == '\n') {
+      *req_size_out = i;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+// Writes the given C string to the given libevent bufferevent object.
+static void xbufferevent_write_str(struct bufferevent * bufev, const char * str) {
+  bufferevent_write(bufev, str, strlen(str));
+}
+
+// Commences the server response by executing the script's request handler with the given URI and
+// optional certificate information. If no data is returned, closes the connection. Otherwise,
+// writes the resultant data chunk to the client's bufferevent object.
+static void client_execute_response(struct client_context * client,
+                                    const struct uri_parser * uri_parser) {
+  assert(client);
+  assert(uri_parser);
+
+  char sha1_hex_str[41];
+
+  const char * uri_address = uri_parser_address(uri_parser);
+  const char * uri_path = uri_parser_path(uri_parser);
+  const char * cert_digest = NULL;
+  time_t cert_expiry = 0;
+
+  const X509 * x509 = SSL_get_peer_certificate(client->ssl_connection);
+  if(x509) {
+    log_info("Client certificate present");
+    if(!compute_X509_digest(&sha1_hex_str, x509) && !compute_X509_expiry(&cert_expiry, x509)) {
+      log_info("Client certificate SHA-1 digest: %s", cert_digest);
+      log_info("Expiry: %ld", cert_expiry);
+      cert_digest = sha1_hex_str;
+    }
+  }
+
+  assert(!client->script_request_handler);
+  client->script_request_handler = scr_reqhandler_new(client->server_context->script_env);
+
+  scr_reqhandler_execute(client->script_request_handler,
+                         uri_address,
+                         uri_path,
+                         cert_digest,
+                         cert_expiry);
+
+  size_t len;
+  const char * str = scr_reqhandler_result(client->script_request_handler, &len);
+  if(str) {
+    bufferevent_write(client->buffer_event, str, len);
+  } else {
+    destroy_client(client);
+    client = NULL;
+  }
+}
+
+// Queries the script's request handler for more response data. Writes the result to the client's
+// bufferevent object. If no data is returned, closes the connection. Otherwise, writes the
+// resultant data chunk to the client's bufferevent object.
+static void client_continue_response(struct client_context * client) {
+  assert(client);
+  assert(client->script_request_handler);
+
+  scr_reqhandler_continue(client->script_request_handler);
+
+  size_t len;
+  const char * str = scr_reqhandler_result(client->script_request_handler, &len);
+  if(str) {
+    bufferevent_write(client->buffer_event, str, len);
+  } else {
+    destroy_client(client);
+    client = NULL;
+  }
+}
+
+static void parse_and_respond(struct client_context * client,
+                              const char * request,
+                              size_t request_size) {
+  struct uri_parser * uri_parser;
+
+  assert(client);
+  assert(request);
+
+  uri_parser = uri_parser_new();
+
+  if(uri_parser_parse(uri_parser, request, request_size)) {
+    xbufferevent_write_str(client->buffer_event, err_header_59_malformed_uri);
+  } else {
+    client_execute_response(client, uri_parser);
+  }
+
+  uri_parser_free(uri_parser);
+}
+
 static void client_readcb(struct bufferevent * buffer_event, void * user_data) {
-  struct client_context * client_context;
-  struct evbuffer * input;
+  struct client_context * client;
+  struct evbuffer * input_buf;
 
-  client_context = (struct client_context *)user_data;
-  input = bufferevent_get_input(buffer_event);
+  client = (struct client_context *)user_data;
 
-  size_t size_in = evbuffer_get_length(input);
+  input_buf = bufferevent_get_input(buffer_event);
 
-  if(client_context->request_size + size_in > max_request_size) {
-    // No room in the inn
-    bufferevent_write(buffer_event,
-                      maximum_request_size_response_str,
-                      strlen(maximum_request_size_response_str));
-    destroy_client(client_context);
-    client_context = NULL;
-    return;
-  }
+  client_read_bytes(client, input_buf);
 
-  evbuffer_remove(input, client_context->request_buffer + client_context->request_size, size_in);
+  size_t request_size;
+  if(request_ready(client->rx_buffer, client->rx_buffer_size, &request_size)) {
+    parse_and_respond(client, client->rx_buffer, request_size);
 
-  size_t uri_size = 0;
+    bufferevent_disable(client->buffer_event, EV_READ);
+  } else if(client->rx_buffer_size == CLIENT_MAX_REQUEST_SIZE) {
+    xbufferevent_write_str(buffer_event, err_header_59_size_exceeded);
 
-  for(size_t i = 0 ; i < client_context->request_size - 1 ; ++i) {
-    if(client_context->request_buffer[i] == '\r' && 
-       client_context->request_buffer[i+1] == '\n') {
-      uri_size = i;
-      break;
-    }
-  }
-
-  if(uri_size) {
-    struct uri_parser * uri_parser = uri_parser_new();
-
-    if(uri_parser_parse(uri_parser, client_context->request_buffer, uri_size)) {
-      static const char error_response[] = "59 Malformed URI\n";
-      bufferevent_write(buffer_event, error_response, strlen(error_response));
-    } else {
-      client_context->script_request_handler = scr_reqhandler_new(client_context->server_context->script_env);
-
-      const char * uri_address = uri_parser_address(uri_parser);
-      const char * uri_path = uri_parser_path(uri_parser);
-
-      X509 * x509 = SSL_get_peer_certificate(client_context->ssl_connection);
-      if(x509) {
-        char sha1_hex_str[41];
-        time_t expiry_time;
-
-        compute_X509_digest(&sha1_hex_str, x509);
-        expiry_time = compute_X509_expiry(x509);
-
-        log_info("Client certificate sha1 digest: %s", sha1_hex_str);
-        log_info("Expiry: %ld", expiry_time);
-
-        scr_reqhandler_execute(client_context->script_request_handler, uri_address, uri_path, sha1_hex_str, expiry_time);
-      } else {
-        scr_reqhandler_execute(client_context->script_request_handler, uri_address, uri_path, NULL, 0);
-      }
-
-      size_t len;
-      const char * str = scr_reqhandler_result(client_context->script_request_handler, &len);
-      if(str) {
-        log_info("result:\n%.*s", (int)len, str);
-        bufferevent_write(buffer_event, str, len);
-      }
-    }
-
-    uri_parser_free(uri_parser);
+    bufferevent_disable(client->buffer_event, EV_READ);
   }
 }
 
 static void client_writecb(struct bufferevent * buffer_event, void * user_data) {
-  struct client_context * client_context;
+  struct client_context * client;
 
-  client_context = (struct client_context *)user_data;
+  client = (struct client_context *)user_data;
 
-  struct evbuffer * output = bufferevent_get_output(buffer_event);
-  if(evbuffer_get_length(output) == 0) {
-    destroy_client(client_context);
-    client_context = NULL;
+  if(client->script_request_handler) {
+    int status = scr_reqhandler_status(client->script_request_handler);
+
+    if(status == SCR_REQHANDLER_SUSPENDED) {
+      client_continue_response(client);
+    } else if(status == SCR_REQHANDLER_DEAD) {
+      destroy_client(client);
+      client = NULL;
+    }
+  } else {
+    destroy_client(client);
+    client = NULL;
   }
 }
 
 static void client_eventcb(struct bufferevent * buffer_event, short events, void * user_data) {
-  struct client_context * client_context;
+  struct client_context * client;
 
-  client_context = (struct client_context *)user_data;
+  client = (struct client_context *)user_data;
 
   if(events & BEV_EVENT_CONNECTED) {
-    // This seems to correspond to when the handshake completes successfully
-    X509 * x509 = SSL_get_peer_certificate(client_context->ssl_connection);
+    // This event seems to correspond to when the handshake completes successfully
+    const X509 * x509 = SSL_get_peer_certificate(client->ssl_connection);
     if(x509) {
       time_t time_now = time(NULL);
       if(X509_cmp_time(X509_get0_notBefore(x509), &time_now) != -1) {
         log_warning("Invalid certificate, not yet valid");
-        bufferevent_write(buffer_event, "62 Not yet valid\r\n", strlen("62 Not yet valid\r\n"));
+        xbufferevent_write_str(buffer_event, err_header_62_not_yet_valid);
       }
       if(X509_cmp_time(X509_get0_notAfter(x509), &time_now) != 1) {
         log_warning("Invalid certificate, expired");
-        bufferevent_write(buffer_event, "62 Expired\r\n", strlen("62 Expired\r\n"));
+        xbufferevent_write_str(buffer_event, err_header_62_expired);
       }
     }
   } else {
@@ -243,8 +360,8 @@ static void client_eventcb(struct bufferevent * buffer_event, short events, void
     } else if(events & BEV_EVENT_TIMEOUT) {
       log_warning("Connection timed out");
     }
-    destroy_client(client_context);
-    client_context = NULL;
+    destroy_client(client);
+    client = NULL;
   }
 }
 
@@ -302,12 +419,12 @@ static void server_accept_cb(struct evconnlistener * listener,
   client_init(client_context, server_context, socket_fd);
 }
 
-static int ssl_verify_cb(X509_STORE_CTX * x509_ctx, void * user_data) {
+static int ssl_verify_cb(X509_STORE_CTX * x509_store, void * user_data) {
   return 1;
 }
 
-static SSL_CTX * evssl_init(void) {
-  SSL_CTX  *server_ctx;
+static SSL_CTX * new_ssl_context(void) {
+  SSL_CTX * server_ctx;
   int rval;
 
   ERR_load_crypto_strings();
@@ -325,13 +442,13 @@ static SSL_CTX * evssl_init(void) {
     exit(1);
   }
 
-  rval = SSL_CTX_set_min_proto_version(server_ctx, min_protocol_version);
+  rval = SSL_CTX_set_min_proto_version(server_ctx, gemini_min_protocol_version);
   if(!rval) {
     log_error("SSL_CTX_set_min_proto_version() failed");
     exit(1);
   }
 
-  rval = SSL_CTX_set_cipher_list(server_ctx, allowed_ciphers);
+  rval = SSL_CTX_set_cipher_list(server_ctx, gemini_allowed_ciphers);
   if(!rval) {
     log_error("SSL_CTX_set_cipher_list() failed");
     exit(1);
@@ -343,6 +460,8 @@ static SSL_CTX * evssl_init(void) {
     exit(1);
   }
 
+  SSL_CTX_set_options(server_ctx, SSL_OP_NO_SSLv2);
+
   SSL_CTX_set_verify(server_ctx, SSL_VERIFY_PEER, NULL);
 
   SSL_CTX_set_cert_verify_callback(server_ctx, ssl_verify_cb, NULL);
@@ -353,17 +472,15 @@ static SSL_CTX * evssl_init(void) {
     exit(1);
   }
 
-  if(!SSL_CTX_use_certificate_chain_file(server_ctx, certificate_file_path) ||
-     !SSL_CTX_use_PrivateKey_file(server_ctx, private_key_file_path, SSL_FILETYPE_PEM)) {
-    log_error("Failed to locate certificate / private key");
-    puts("Couldn't read 'pkey' or 'cert' file. To generate a key and a self-signed certificate, run:\n"
-         "  openssl genrsa -out pkey 2048\n"
-         "  openssl req -new -key pkey -out cert.req\n"
-         "  openssl x509 -req -days 365 -in cert.req -signkey pkey -out cert");
+  if(!SSL_CTX_use_certificate_chain_file(server_ctx, certificate_file_path)) {
+    log_error("Failed to read certificate file '%s'", certificate_file_path);
     exit(1);
   }
 
-  SSL_CTX_set_options(server_ctx, SSL_OP_NO_SSLv2);
+  if(!SSL_CTX_use_PrivateKey_file(server_ctx, private_key_file_path, SSL_FILETYPE_PEM)) {
+    log_error("Failed to read private key file '%s'", private_key_file_path);
+    exit(1);
+  }
 
   return server_ctx;
 }
@@ -373,7 +490,7 @@ static struct server_context * global_server_context;
 void server_init(struct event_base * event_base) {
   global_server_context = (struct server_context *)malloc(sizeof(*global_server_context));
 
-  global_server_context->ssl_context = evssl_init();
+  global_server_context->ssl_context = new_ssl_context();
 
   global_server_context->event_base = event_base;
 
