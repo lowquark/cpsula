@@ -3,13 +3,10 @@
 
 #include <stddef.h>
 
-struct uri_parser {
-  char * address;
-  char * path;
-};
+struct uri_parser;
 
-void uri_parser_init(struct uri_parser * up);
-void uri_parser_clear(struct uri_parser * up);
+struct uri_parser * uri_parser_new(void);
+void uri_parser_free(struct uri_parser * up);
 
 int uri_parser_parse(struct uri_parser * up, const char * uri, size_t uri_size);
 

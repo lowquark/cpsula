@@ -155,14 +155,16 @@ static void client_readcb(struct bufferevent * buffer_event, void * user_data) {
   }
 
   if(uri_size) {
-    struct uri_parser parser;
-    uri_parser_init(&parser);
+    struct uri_parser * uri_parser = uri_parser_new();
 
-    if(uri_parser_parse(&parser, client_context->request_buffer, uri_size)) {
+    if(uri_parser_parse(uri_parser, client_context->request_buffer, uri_size)) {
       static const char error_response[] = "59 Malformed URI\n";
       bufferevent_write(buffer_event, error_response, strlen(error_response));
     } else {
       client_context->script_request_handler = scr_reqhandler_new(client_context->server_context->script_env);
+
+      const char * uri_address = uri_parser_address(uri_parser);
+      const char * uri_path = uri_parser_path(uri_parser);
 
       X509 * x509 = SSL_get_peer_certificate(client_context->ssl_connection);
       if(x509) {
@@ -175,9 +177,9 @@ static void client_readcb(struct bufferevent * buffer_event, void * user_data) {
         log_info("Client certificate sha1 digest: %s", sha1_hex_str);
         log_info("Expiry: %ld", expiry_time);
 
-        scr_reqhandler_execute(client_context->script_request_handler, parser.address, parser.path, sha1_hex_str, expiry_time);
+        scr_reqhandler_execute(client_context->script_request_handler, uri_address, uri_path, sha1_hex_str, expiry_time);
       } else {
-        scr_reqhandler_execute(client_context->script_request_handler, parser.address, parser.path, NULL, 0);
+        scr_reqhandler_execute(client_context->script_request_handler, uri_address, uri_path, NULL, 0);
       }
 
       size_t len;
@@ -188,7 +190,7 @@ static void client_readcb(struct bufferevent * buffer_event, void * user_data) {
       }
     }
 
-    uri_parser_clear(&parser);
+    uri_parser_free(uri_parser);
   }
 }
 

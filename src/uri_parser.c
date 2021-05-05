@@ -6,14 +6,24 @@
 #include <string.h>
 #include <stdlib.h>
 
-void uri_parser_init(struct uri_parser * up) {
-  memset(up, 0, sizeof(*up));
-}
+struct uri_parser {
+  char * address;
+  char * path;
+};
 
-void uri_parser_clear(struct uri_parser * up) {
+static void clear(struct uri_parser * up) {
   free(up->address);
   free(up->path);
   memset(up, 0, sizeof(*up));
+}
+
+struct uri_parser * uri_parser_new(void) {
+  return calloc(sizeof(struct uri_parser), 1);
+}
+
+void uri_parser_free(struct uri_parser * up) {
+  clear(up);
+  free(up);
 }
 
 const char * uri_parser_address(const struct uri_parser * up) {
@@ -116,7 +126,7 @@ parse_path:
   path_end = read_end;
 
 parse_complete:
-  uri_parser_clear(up);
+  clear(up);
 
   if(host_end != host_begin) {
     if(port_end != port_begin) {
@@ -183,30 +193,31 @@ static const struct uri_test_case uri_test_cases[] = {
 };
 
 void test_uri_parser_case(const struct uri_test_case * test_case) {
-  struct uri_parser parser;
+  struct uri_parser * parser;
   int rval;
 
-  uri_parser_init(&parser);
+  parser = uri_parser_new();
 
   log_info("%s", test_case->uri);
 
-  rval = uri_parser_parse(&parser, test_case->uri, strlen(test_case->uri));
+  rval = uri_parser_parse(parser, test_case->uri, strlen(test_case->uri));
 
   assert(rval == test_case->return_value);
 
   if(test_case->address) {
-    assert(parser.address && !strcmp(test_case->address, parser.address));
+    assert(parser->address && !strcmp(test_case->address, parser->address));
   } else {
-    assert(!parser.address);
+    assert(!parser->address);
   }
 
   if(test_case->path) {
-    assert(parser.path && !strcmp(test_case->path, parser.path));
+    assert(parser->path && !strcmp(test_case->path, parser->path));
   } else {
-    assert(!parser.path);
+    assert(!parser->path);
   }
 
-  uri_parser_clear(&parser);
+  uri_parser_free(parser);
+  parser = NULL;
 }
 
 int main(int argc, char ** argv) {
