@@ -38,12 +38,32 @@ static int is_alpha(int c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-static int is_numeric(int c) {
+static int is_digit(int c) {
   return (c >= '0' && c <= '9');
 }
 
+static int is_unreserved(int c) {
+  return is_alpha(c) || is_digit(c) || c == '-' || c == '.' || c == '_' || c == '~';
+}
+
+static int is_sub_delim(int c) {
+  return c == '!' || c == '$' || c == '&' || c == '\'' || c == '(' || c == ')' || c == '*' || c == '+' || c == ',' || c == ';' || c == '=';
+}
+
 static int is_host_char(int c) {
-  return is_alpha(c) || is_numeric(c) || c == '.' || c == '-';
+  return is_unreserved(c) || is_sub_delim(c) || c == '%';
+}
+
+static int is_path_char(int c) {
+  return is_unreserved(c) || is_sub_delim(c) || c == '%' || c == ':' || c == '@' || c == '/';
+}
+
+static int is_query_char(int c) {
+  return is_unreserved(c) || is_sub_delim(c) || c == '%' || c == ':' || c == '@' || c == '/' || c == '?';
+}
+
+static int is_fragment_char(int c) {
+  return is_unreserved(c) || is_sub_delim(c) || c == '%' || c == ':' || c == '@' || c == '/' || c == '?';
 }
 
 static char * new_str(const char * begin, const char * end) {
@@ -55,12 +75,10 @@ static char * new_str(const char * begin, const char * end) {
 }
 
 int uri_parser_parse(struct uri_parser * up, const char * uri, size_t uri_size) {
-  const char * host_begin = NULL;
-  const char * host_end = NULL;
-  const char * port_begin = NULL;
-  const char * port_end = NULL;
-  const char * path_begin = NULL;
-  const char * path_end = NULL;
+  const char * address_begin = NULL;
+  const char * address_end = NULL;
+  const char * pqf_begin = NULL;
+  const char * pqf_end = NULL;
   const char * read_ptr = uri;
   const char * read_end = uri + uri_size;
 
@@ -76,69 +94,120 @@ int uri_parser_parse(struct uri_parser * up, const char * uri, size_t uri_size) 
 
   read_ptr = uri + strlen("gemini://");
 
-  // At least one <host-char> until '/'
-  host_begin = read_ptr;
+  // A select
   if(read_ptr == read_end) { return 1; }
-  c = *read_ptr++;
-
+  c = *read_ptr;
   if(!is_host_char(c)) { return 1; }
 
-  for(;;) {
-    host_end = read_ptr;
-    if(read_ptr == read_end) { goto parse_complete; }
-    c = *read_ptr++;
+  // B consume
+  address_begin = read_ptr;
 
-    if(c == '@') {
-      // Userinfo not allowed
-      return 1;
-    }
-    if(c == '/') {
-      goto parse_path;
-    }
-    if(c == ':') {
-      goto parse_port;
-    }
-    if(!is_host_char(c)) { return 1; }
+  for(;;) {
+    // B/C consume
+    assert(is_host_char(*read_ptr));
+    ++read_ptr;
+    address_end = read_ptr;
+
+    // B/C select
+    if(read_ptr == read_end) { goto parse_complete; }
+    c = *read_ptr;
+    if(c == ':') { goto parse_port; }
+    else if(c == '/') { goto parse_path; }
+    else if(c == '?') { goto parse_query; }
+    else if(c == '#') { goto parse_fragment; }
+    else if(!is_host_char(c)) { return 1; }
   }
 
 parse_port:
-  // At least one number until '/'
-  port_begin = read_ptr;
-  port_end = read_ptr;
-  if(read_ptr == read_end) { return 1; }
-  c = *read_ptr++;
+  // D consume
+  assert(*read_ptr == ':');
+  ++read_ptr;
+  address_end = read_ptr;
 
-  if(!is_numeric(c)) { return 1; }
+  // D select
+  if(read_ptr == read_end) { return 1; }
+  c = *read_ptr;
+  if(!is_digit(c)) { return 1; }
 
   for(;;) {
-    port_end = read_ptr;
-    if(read_ptr == read_end) { goto parse_complete; }
-    c = *read_ptr++;
+    // E consume
+    assert(is_digit(*read_ptr));
+    ++read_ptr;
+    address_end = read_ptr;
 
-    if(c == '/') {
-      goto parse_path;
-    }
-    if(!is_numeric(c)) { return 1; }
+    // E select
+    if(read_ptr == read_end) { goto parse_complete; }
+    c = *read_ptr;
+    if(c == '/') { goto parse_path; }
+    else if(c == '?') { goto parse_query; }
+    else if(c == '#') { goto parse_fragment; }
+    else if(!is_digit(c)) { return 1; }
   }
 
 parse_path:
-  path_begin = read_ptr-1;
-  path_end = read_end;
+  // F consume
+  assert(*read_ptr == '/');
+  pqf_begin = read_ptr;
+
+  for(;;) {
+    // F/G consume
+    ++read_ptr;
+    pqf_end = read_ptr;
+
+    // F/G select
+    if(read_ptr == read_end) { goto parse_complete; }
+    c = *read_ptr;
+    if(c == '?') { goto parse_query; }
+    else if(c == '#') { goto parse_fragment; }
+    else if(!is_path_char(c)) { return 1; }
+  }
+
+parse_query:
+  // H consume
+  assert(*read_ptr == '?');
+  if(!pqf_begin) {
+    pqf_begin = read_ptr;
+  }
+
+  for(;;) {
+    // H/I consume
+    ++read_ptr;
+    pqf_end = read_ptr;
+
+    // H/I select
+    if(read_ptr == read_end) { goto parse_complete; }
+    c = *read_ptr;
+    if(c == '#') { goto parse_fragment; }
+    else if(!is_query_char(c)) { return 1; }
+  }
+
+parse_fragment:
+  // J consume
+  assert(*read_ptr == '#');
+  if(!pqf_begin) {
+    pqf_begin = read_ptr;
+  }
+
+  for(;;) {
+    // J/K consume
+    ++read_ptr;
+    pqf_end = read_ptr;
+
+    // J/K select
+    if(read_ptr == read_end) { goto parse_complete; }
+    c = *read_ptr;
+    if(!is_fragment_char(c)) { return 1; }
+  }
 
 parse_complete:
   clear(up);
 
-  if(host_end != host_begin) {
-    if(port_end != port_begin) {
-      assert(port_end > host_begin);
-      up->address = new_str(host_begin, port_end);
-    } else {
-      up->address = new_str(host_begin, host_end);
-    }
+  if(address_end != address_begin) {
+    up->address = new_str(address_begin, address_end);
   }
 
-  if(path_end != path_begin) {
-    up->path = new_str(path_begin, path_end);
+  if(pqf_end != pqf_begin) {
+    up->path = new_str(pqf_begin, pqf_end);
   }
 
   return 0;
@@ -154,42 +223,61 @@ struct uri_test_case {
 };
 
 static const struct uri_test_case uri_test_cases[] = {
-  { "",                                NULL,                       NULL,     1 },
-  { "g",                               NULL,                       NULL,     1 },
-  { "ge",                              NULL,                       NULL,     1 },
-  { "gem",                             NULL,                       NULL,     1 },
-  { "gemi",                            NULL,                       NULL,     1 },
-  { "gemin",                           NULL,                       NULL,     1 },
-  { "gemini",                          NULL,                       NULL,     1 },
-  { "gemini:",                         NULL,                       NULL,     1 },
-  { "gemini:/",                        NULL,                       NULL,     1 },
-  { "gemini://",                       NULL,                       NULL,     1 },
-  { "gemini://a",                      "a",                        NULL,     0 },
-  { "gemini://aa",                     "aa",                       NULL,     0 },
-  { "gemini://aa.bb",                  "aa.bb",                    NULL,     0 },
-  { "gemini://aa.bb:0",                "aa.bb:0",                  NULL,     0 },
-  { "gemini://aa.bb:01",               "aa.bb:01",                 NULL,     0 },
-  { "gemini://aa.bb:9001",             "aa.bb:9001",               NULL,     0 },
-  { "gemini://aa.bb:1239001",          "aa.bb:1239001",            NULL,     0 },
-  { "gemini://127.0.0.1:1239001",      "127.0.0.1:1239001",        NULL,     0 },
-  { "gemini://aa.bb:9001/",            "aa.bb:9001",               "/",      0 },
-  { "gemini://aa.bb:9001/x",           "aa.bb:9001",               "/x",     0 },
-  { "gemini://aa.bb:9001/x/",          "aa.bb:9001",               "/x/",    0 },
-  { "gemini://aa.bb:9001/x/y",         "aa.bb:9001",               "/x/y",   0 },
-  { "gemini://aa:",                    NULL,                       NULL,     1 },
-  { "gemini://test /asdf",             NULL,                       NULL,     1 },
-  { "gemini://aa:88:88/asdf",          NULL,                       NULL,     1 },
-  { "gemini://",                       NULL,                       NULL,     1 },
-  { "gemini:///asdf",                  NULL,                       NULL,     1 },
-  { "gemini:///aa/bb/cc",              NULL,                       NULL,     1 },
-  { "gemini:///aa/bb:88/cc",           NULL,                       NULL,     1 },
-  { "gemini://:8888",                  NULL,                       NULL,     1 },
-  { "gemini://:8888/asdf",             NULL,                       NULL,     1 },
-  { "test:8888/asdf",                  NULL,                       NULL,     1 },
-  { "gemini:/test:8888/asdf",          NULL,                       NULL,     1 },
-  { "gamini://test:8888/asdf",         NULL,                       NULL,     1 },
-  { "gemini://test:a888/asdf",         NULL,                       NULL,     1 },
-  { "gemini://test:/asdf",             NULL,                       NULL,     1 },
+  { "",                                       NULL,                         NULL,                1 },
+  { "g",                                      NULL,                         NULL,                1 },
+  { "ge",                                     NULL,                         NULL,                1 },
+  { "gem",                                    NULL,                         NULL,                1 },
+  { "gemi",                                   NULL,                         NULL,                1 },
+  { "gemin",                                  NULL,                         NULL,                1 },
+  { "gemini",                                 NULL,                         NULL,                1 },
+  { "gemini:",                                NULL,                         NULL,                1 },
+  { "gemini:/",                               NULL,                         NULL,                1 },
+  { "gemini://",                              NULL,                         NULL,                1 },
+  { "gemini://a",                             "a",                          NULL,                0 },
+  { "gemini://aa",                            "aa",                         NULL,                0 },
+  { "gemini://aa.bb",                         "aa.bb",                      NULL,                0 },
+  { "gemini://aa.bb:0",                       "aa.bb:0",                    NULL,                0 },
+  { "gemini://aa.bb:01",                      "aa.bb:01",                   NULL,                0 },
+  { "gemini://aa.bb:9001",                    "aa.bb:9001",                 NULL,                0 },
+  { "gemini://aa.bb:1239001",                 "aa.bb:1239001",              NULL,                0 },
+  { "gemini://127.0.0.1:1239001",             "127.0.0.1:1239001",          NULL,                0 },
+  { "gemini://aa.bb:9001/",                   "aa.bb:9001",                 "/",                 0 },
+  { "gemini://aa.bb:9001/x",                  "aa.bb:9001",                 "/x",                0 },
+  { "gemini://aa.bb:9001/x/",                 "aa.bb:9001",                 "/x/",               0 },
+  { "gemini://aa.bb:9001/x/y",                "aa.bb:9001",                 "/x/y",              0 },
+  { "gemini://aa.bb:9001/x/y?",               "aa.bb:9001",                 "/x/y?",             0 },
+  { "gemini://aa.bb:9001/x/y??",              "aa.bb:9001",                 "/x/y??",            0 },
+  { "gemini://aa.bb:9001/x/y?q",              "aa.bb:9001",                 "/x/y?q",            0 },
+  { "gemini://aa.bb:9001/x/y?q=5",            "aa.bb:9001",                 "/x/y?q=5",          0 },
+  { "gemini://aa.bb:9001/x/y?q=5#",           "aa.bb:9001",                 "/x/y?q=5#",         0 },
+  { "gemini://aa.bb:9001/x/y?q=5#g",          "aa.bb:9001",                 "/x/y?q=5#g",        0 },
+  { "gemini://aa.bb#",                        "aa.bb",                      "#",                 0 },
+  { "gemini://aa.bb?#",                       "aa.bb",                      "?#",                0 },
+  { "gemini://aa.bb/?#",                      "aa.bb",                      "/?#",               0 },
+  { "gemini://aa.bb??",                       "aa.bb",                      "??",                0 },
+  { "gemini://aa.bb??#",                      "aa.bb",                      "??#",               0 },
+  { "gemini://aa.bb?/?/#/",                   "aa.bb",                      "?/?/#/",            0 },
+  { "gemini://aa.bb##",                       NULL,                         NULL,                1 },
+  { "gemini://aa.bb?##",                      NULL,                         NULL,                1 },
+  { "gemini://aa.bb/?##",                     NULL,                         NULL,                1 },
+  { "gemini://aa:",                           NULL,                         NULL,                1 },
+  { "gemini://test /asdf",                    NULL,                         NULL,                1 },
+  { "gemini://test/asdf^",                    NULL,                         NULL,                1 },
+  { "gemini://test/asdf/^",                   NULL,                         NULL,                1 },
+  { "gemini://test/asdf/?^",                  NULL,                         NULL,                1 },
+  { "gemini://test/asdf/?#^",                 NULL,                         NULL,                1 },
+  { "gemini://test/^asdf/?#",                 NULL,                         NULL,                1 },
+  { "gemini://aa:88:88/asdf",                 NULL,                         NULL,                1 },
+  { "gemini:///asdf",                         NULL,                         NULL,                1 },
+  { "gemini:///aa/bb/cc",                     NULL,                         NULL,                1 },
+  { "gemini:///aa/bb:88/cc",                  NULL,                         NULL,                1 },
+  { "gemini://:8888",                         NULL,                         NULL,                1 },
+  { "gemini://:8888/asdf",                    NULL,                         NULL,                1 },
+  { "test:8888/asdf",                         NULL,                         NULL,                1 },
+  { "gemini:/test:8888/asdf",                 NULL,                         NULL,                1 },
+  { "gamini://test:8888/asdf",                NULL,                         NULL,                1 },
+  { "gemini://test:a888/asdf",                NULL,                         NULL,                1 },
+  { "gemini://test:/asdf",                    NULL,                         NULL,                1 },
 };
 
 void test_uri_parser_case(const struct uri_test_case * test_case) {
