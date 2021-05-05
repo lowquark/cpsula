@@ -101,24 +101,24 @@ static char nyble_ascii(unsigned int nyble) {
 //
 // $ openssl x509 -noout -in cert -fingerprint -serial
 //
-// Returns 0 on success, and 1 if the SSL library fails somehow.
+// Returns 1 on success, and 0 if the SSL library fails somehow.
 static int compute_X509_digest(char (*sha1_hex_out)[41], const X509 * x509) {
   const EVP_MD * sha1 = EVP_get_digestbyname("sha1");
   if(!sha1) {
     log_warning("EVP_get_digestbyname() failed");
-    return 1;
+    return 0;
   }
 
   unsigned char sha1_digest[EVP_MAX_MD_SIZE] = { };
   unsigned int sha1_digest_len = 0;
   if(!X509_digest(x509, sha1, sha1_digest, &sha1_digest_len)) {
     log_warning("X509_digest() failed");
-    return 1;
+    return 0;
   }
 
   if(sha1_digest_len != 20) {
     log_warning("SHA1 digest does not appear to be the size of a SHA1 digest");
-    return 1;
+    return 0;
   }
 
   char * out = *sha1_hex_out;
@@ -129,10 +129,10 @@ static int compute_X509_digest(char (*sha1_hex_out)[41], const X509 * x509) {
   }
   out[40] = '\0';
 
-  return 0;
+  return 1;
 }
 
-// Computes a GMT, POSIX timestamp from the unwieldy formats in the X509 certificate
+// Computes a GMT, POSIX timestamp from the unwieldy formats in the X509 certificate.
 static int compute_X509_expiry(time_t * expiry, const X509 * x509) {
   struct tm time_tm;
 
@@ -141,9 +141,10 @@ static int compute_X509_expiry(time_t * expiry, const X509 * x509) {
 
   if(ASN1_TIME_to_tm(X509_get0_notAfter(x509), &time_tm)) {
     *expiry = mktime(&time_tm);
-    return 0;
-  } else {
     return 1;
+  } else {
+    log_warning("ASN1_TIME_to_tm failed");
+    return 0;
   }
 }
 
@@ -217,10 +218,12 @@ static void client_execute_response(struct client_context * client,
   const X509 * x509 = SSL_get_peer_certificate(client->ssl_connection);
   if(x509) {
     log_info("Client certificate present");
-    if(!compute_X509_digest(&sha1_hex_str, x509) && !compute_X509_expiry(&cert_expiry, x509)) {
-      log_info("Client certificate SHA-1 digest: %s", cert_digest);
-      log_info("Expiry: %ld", cert_expiry);
-      cert_digest = sha1_hex_str;
+    if(compute_X509_digest(&sha1_hex_str, x509)) {
+      if(compute_X509_expiry(&cert_expiry, x509)) {
+        log_info("Client certificate SHA-1 digest: %s", sha1_hex_str);
+        log_info("Expiry: %ld", cert_expiry);
+        cert_digest = sha1_hex_str;
+      }
     }
   }
 
