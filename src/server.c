@@ -24,6 +24,8 @@
 #include <sys/socket.h>
 #endif
 
+const char * main_file = "main.lua";
+
 static const unsigned short gemini_port = 1965;
 
 static const char gemini_allowed_ciphers[] = 
@@ -217,14 +219,17 @@ static void client_execute_response(struct client_context * client,
   const char * cert_digest = NULL;
   time_t cert_expiry = 0;
 
-  const X509 * x509 = SSL_get_peer_certificate(client->ssl_connection);
+  X509 * x509 = SSL_get_peer_certificate(client->ssl_connection);
   if(x509) {
     if(compute_X509_digest(&sha1_hex_str, x509)) {
       if(compute_X509_expiry(&cert_expiry, x509)) {
         cert_digest = sha1_hex_str;
-        log_info("Client certificate: %s expires: %ld", cert_digest, cert_expiry);
+        log_info("Client fingerprint: %s expires: %ld", cert_digest, cert_expiry);
       }
     }
+
+    // SSL_get_peer_certificate increases the reference count on this object
+    X509_free(x509);
   }
 
   assert(!client->script_request_handler);
@@ -298,14 +303,12 @@ static void client_readcb(struct bufferevent * buffer_event, void * user_data) {
 
   size_t request_size;
   if(request_ready(client->rx_buffer, client->rx_buffer_size, &request_size)) {
-    parse_and_respond(client, client->rx_buffer, request_size);
-
     bufferevent_disable(client->buffer_event, EV_READ);
+    parse_and_respond(client, client->rx_buffer, request_size);
   } else if(client->rx_buffer_size == CLIENT_MAX_REQUEST_SIZE) {
+    bufferevent_disable(client->buffer_event, EV_READ);
     log_warning("Maximum request size exceeded");
     xbufferevent_write_str(buffer_event, err_header_59_size_exceeded);
-
-    bufferevent_disable(client->buffer_event, EV_READ);
   }
 }
 
@@ -336,7 +339,7 @@ static void client_eventcb(struct bufferevent * buffer_event, short events, void
 
   if(events & BEV_EVENT_CONNECTED) {
     // This event seems to correspond to when the handshake completes successfully
-    const X509 * x509 = SSL_get_peer_certificate(client->ssl_connection);
+    X509 * x509 = SSL_get_peer_certificate(client->ssl_connection);
     if(x509) {
       time_t time_now = time(NULL);
       if(X509_cmp_time(X509_get0_notBefore(x509), &time_now) != -1) {
@@ -347,6 +350,8 @@ static void client_eventcb(struct bufferevent * buffer_event, short events, void
         log_warning("Invalid certificate, expired");
         xbufferevent_write_str(buffer_event, err_header_62_expired);
       }
+      // SSL_get_peer_certificate increases the reference count on this object
+      X509_free(x509);
     }
   } else {
     if(events & BEV_EVENT_EOF) {
@@ -501,6 +506,8 @@ void server_init(struct event_base * event_base) {
   global_server_context->event_base = event_base;
 
   global_server_context->script_env = luaenv_context_new();
+
+  luaenv_context_init(global_server_context->script_env, main_file);
 
   struct sockaddr_in sin = {0};
   sin.sin_family = AF_INET;

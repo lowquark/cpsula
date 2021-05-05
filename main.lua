@@ -21,7 +21,6 @@ end
 
 return function(address, resource, fingerprint, expiry)
   print(address, resource, fingerprint, expiry);
-  local count = 10
   return coroutine.wrap(function()
     coroutine.yield('20 text/gemini\r\n')
     for i=0,10 do

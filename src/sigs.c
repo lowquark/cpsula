@@ -1,5 +1,4 @@
 
-#include <script.h>
 #include <sigs.h>
 
 #include <signal.h>

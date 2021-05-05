@@ -1,6 +1,5 @@
 
 #include <log.h>
-#include <script.h>
 #include <server.h>
 #include <sigs.h>
 #include <uri_parser.h>
