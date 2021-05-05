@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-const char * main_file = "idea.lua";
+const char * main_file = "main.lua";
 
 struct scr_env {
   lua_State * L;
