@@ -1,4 +1,6 @@
 /lançar
 /pkey
 /cert
+/cert.req
 *.o
+/test_uri_parser

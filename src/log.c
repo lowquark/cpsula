@@ -23,7 +23,7 @@ static void get_timestr(char (*str)[10]) {
 void log_init(FILE * _file) {
   file = _file;
 
-  // TODO: There's probably a better way to check for this
+  // TODO: There might be a better way to check for this
   color_enabled = _file == stdout || _file == stderr;
 }
 

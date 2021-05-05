@@ -4,8 +4,26 @@
 #include <event2/buffer.h>
 #include <event2/event.h>
 
-typedef struct script_session script_session;
+typedef struct scr_env scr_env;
+typedef struct scr_reqhandler scr_reqhandler;
 
-void new_session(const char * uri);
+#define SCR_REQHANDLER_DEAD      0
+#define SCR_REQHANDLER_SUSPENDED 1
+
+scr_env * scr_env_new();
+void scr_env_free(scr_env * base);
+
+scr_reqhandler * scr_reqhandler_new(scr_env * base);
+void scr_reqhandler_free(scr_reqhandler * handler);
+
+const char * scr_reqhandler_result(scr_reqhandler * handler, size_t * length);
+
+int scr_reqhandler_execute(scr_reqhandler * handler,
+                           const char * authority,
+                           const char * resource, 
+                           const char * fingerprint, 
+                           time_t expiry);
+
+int scr_reqhandler_continue(scr_reqhandler * handler);
 
 #endif
