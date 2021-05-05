@@ -160,6 +160,8 @@ static void destroy_client(struct client_context * client_context) {
 
   memset(client_context, 0, sizeof(*client_context));
   free(client_context);
+
+  log_info("Connection closed");
 }
 
 // Reads as many bytes from the input buffer as possible, and stores them in the client's request
@@ -217,12 +219,10 @@ static void client_execute_response(struct client_context * client,
 
   const X509 * x509 = SSL_get_peer_certificate(client->ssl_connection);
   if(x509) {
-    log_info("Client certificate present");
     if(compute_X509_digest(&sha1_hex_str, x509)) {
       if(compute_X509_expiry(&cert_expiry, x509)) {
-        log_info("Client certificate SHA-1 digest: %s", sha1_hex_str);
-        log_info("Expiry: %ld", cert_expiry);
         cert_digest = sha1_hex_str;
+        log_info("Client certificate: %s expires: %ld", cert_digest, cert_expiry);
       }
     }
   }
@@ -276,8 +276,10 @@ static void parse_and_respond(struct client_context * client,
   uri_parser = uri_parser_new();
 
   if(uri_parser_parse(uri_parser, request, request_size)) {
+    log_warning("Rejecting malformed URL");
     xbufferevent_write_str(client->buffer_event, err_header_59_malformed_uri);
   } else {
+    log_info("Handling request for %.*s", (int)request_size, request);
     client_execute_response(client, uri_parser);
   }
 
@@ -300,6 +302,7 @@ static void client_readcb(struct bufferevent * buffer_event, void * user_data) {
 
     bufferevent_disable(client->buffer_event, EV_READ);
   } else if(client->rx_buffer_size == CLIENT_MAX_REQUEST_SIZE) {
+    log_warning("Maximum request size exceeded");
     xbufferevent_write_str(buffer_event, err_header_59_size_exceeded);
 
     bufferevent_disable(client->buffer_event, EV_READ);
