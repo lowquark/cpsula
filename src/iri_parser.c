@@ -7,32 +7,12 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-struct iri_parser {
-  char * address;
-  char * resource;
-};
-
-static void clear(struct iri_parser * up) {
-  free(up->address);
-  free(up->resource);
-  memset(up, 0, sizeof(*up));
-}
-
-struct iri_parser * iri_parser_new(void) {
-  return calloc(sizeof(struct iri_parser), 1);
-}
-
-void iri_parser_free(struct iri_parser * up) {
-  clear(up);
-  free(up);
-}
-
-const char * iri_parser_address(const struct iri_parser * up) {
-  return up->address;
-}
-
-const char * iri_parser_resource(const struct iri_parser * up) {
-  return up->resource;
+static char * new_str(const char * begin, const char * end) {
+  size_t size = end - begin;
+  char * str = (char *)malloc(size + 1);
+  memcpy(str, begin, size);
+  str[size] = '\0';
+  return str;
 }
 
 static int is_alpha(uint_fast32_t c) {
@@ -41,6 +21,10 @@ static int is_alpha(uint_fast32_t c) {
 
 static int is_digit(uint_fast32_t c) {
   return (c >= '0' && c <= '9');
+}
+
+static int is_hex_digit(uint_fast32_t c) {
+  return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
 }
 
 // https://tools.ietf.org/html/rfc3987#section-2.2
@@ -94,9 +78,9 @@ static int is_fragment_char(uint_fast32_t c) {
          c == '%' || c == ':' || c == '@' || c == '/' || c == '?';
 }
 
-static int read_char_utf8(uint_fast32_t * codepoint_out,
-                          const char * read_ptr,
-                          const char * read_end) {
+static size_t read_char_utf8(uint_fast32_t * codepoint_out,
+                             const char * read_ptr,
+                             const char * read_end) {
   uint_fast32_t codepoint;
   size_t valid_size;
   uint_fast32_t c;
@@ -190,12 +174,24 @@ static int read_char_utf8(uint_fast32_t * codepoint_out,
   return 0;
 }
 
-static char * new_str(const char * begin, const char * end) {
-  size_t size = end - begin;
-  char * str = (char *)malloc(size + 1);
-  memcpy(str, begin, size);
-  str[size] = '\0';
-  return str;
+struct iri_parser {
+  char * address;
+  char * resource;
+};
+
+static void clear(struct iri_parser * up) {
+  free(up->address);
+  free(up->resource);
+  memset(up, 0, sizeof(*up));
+}
+
+struct iri_parser * iri_parser_new(void) {
+  return calloc(sizeof(struct iri_parser), 1);
+}
+
+void iri_parser_free(struct iri_parser * up) {
+  clear(up);
+  free(up);
 }
 
 /*
@@ -241,8 +237,8 @@ validated by this parser, are parsed by this rule.
  ||--| '/' |--+--| path char |--+--||
      +-----+     +-----------+
 
-Note: Here, path char includes '/', segments are not handled individually (Compare to IRI ABNF rules
-'ipath-abempty', 'isegment')
+Note: Here, path char includes '/', and segments are not handled individually. (Compare to IRI ABNF
+rules 'ipath-abempty', 'isegment'.)
 
  Query:
  ------
@@ -263,7 +259,7 @@ Note: Here, path char includes '/', segments are not handled individually (Compa
 */
 
 int iri_parser_parse(struct iri_parser * up, const char * iri, size_t iri_size) {
-  // host/port string slice markers
+  // Host, port string slice markers
   const char * address_begin = NULL;
   const char * address_end = NULL;
   // Path, query, fragment string slice markers
@@ -273,13 +269,14 @@ int iri_parser_parse(struct iri_parser * up, const char * iri, size_t iri_size) 
   const char * read_ptr = iri;
   const char * read_end = iri + iri_size;
 
+  // Most recent UTF-8 character read
   uint_fast32_t c;
-  int c_size;
+  size_t c_size;
 
   assert(up);
   assert(iri);
 
-  // Null select
+  // Select
   if(iri_size < strlen("gemini://")) {
     return 1;
   }
@@ -404,6 +401,20 @@ parse_fragment:
   }
 
 parse_complete:
+  // Validate percent-encoded sequences
+  for(read_ptr = iri ; read_ptr != read_end ; ++read_ptr) {
+    if(*read_ptr == '%') {
+      ++read_ptr;
+      if(read_ptr == read_end) { return 1; }
+      if(!is_hex_digit(*read_ptr)) { return 1; }
+
+      ++read_ptr;
+      if(read_ptr == read_end) { return 1; }
+      if(!is_hex_digit(*read_ptr)) { return 1; }
+    }
+  }
+
+  // Parse successful, replace existing field values
   clear(up);
 
   if(address_end != address_begin) {
@@ -417,19 +428,20 @@ parse_complete:
   return 0;
 }
 
+const char * iri_parser_address(const struct iri_parser * up) {
+  return up->address;
+}
+
+const char * iri_parser_resource(const struct iri_parser * up) {
+  return up->resource;
+}
+
 #ifdef TEST
 
 struct iri_test_case {
   const char * iri;
   const char * address;
   const char * resource;
-  int return_value;
-};
-
-struct utf8_test_case {
-  uint8_t data[5];
-  size_t length;
-  uint_fast32_t codepoint;
   int return_value;
 };
 
@@ -469,6 +481,10 @@ static const struct iri_test_case iri_test_cases[] = {
   { "gemini://aa.bb??",                       "aa.bb",                      "??",               0 },
   { "gemini://aa.bb??#",                      "aa.bb",                      "??#",              0 },
   { "gemini://aa.bb?/?/#/",                   "aa.bb",                      "?/?/#/",           0 },
+  { "gemini://ää%20%20",                      "ää%20%20",                   NULL,               0 },
+  { "gemini://ää%FF%FF",                      "ää%FF%FF",                   NULL,               0 },
+  { "gemini://ää%F%FF",                       NULL,                         NULL,               1 },
+  { "gemini://ää%FF%F",                       NULL,                         NULL,               1 },
   { "gemini://aa.bb##",                       NULL,                         NULL,               1 },
   { "gemini://aa.bb?##",                      NULL,                         NULL,               1 },
   { "gemini://aa.bb/?##",                     NULL,                         NULL,               1 },
@@ -490,6 +506,13 @@ static const struct iri_test_case iri_test_cases[] = {
   { "gamini://test:8888/asdf",                NULL,                         NULL,               1 },
   { "gemini://test:a888/asdf",                NULL,                         NULL,               1 },
   { "gemini://test:/asdf",                    NULL,                         NULL,               1 },
+};
+
+struct utf8_test_case {
+  uint8_t data[5];
+  size_t length;
+  uint_fast32_t codepoint;
+  size_t return_value;
 };
 
 static const struct utf8_test_case utf8_test_cases[] = {
