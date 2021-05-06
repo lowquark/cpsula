@@ -1,6 +1,6 @@
-/lançar
+/cpsula
 /pkey
 /cert
 /cert.req
 *.o
-/test_uri_parser
+/test

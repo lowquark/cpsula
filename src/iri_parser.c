@@ -1,38 +1,38 @@
 
 #include <log.h>
-#include <uri_parser.h>
+#include <iri_parser.h>
 
 #include <assert.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
 
-struct uri_parser {
+struct iri_parser {
   char * address;
-  char * path;
+  char * resource;
 };
 
-static void clear(struct uri_parser * up) {
+static void clear(struct iri_parser * up) {
   free(up->address);
-  free(up->path);
+  free(up->resource);
   memset(up, 0, sizeof(*up));
 }
 
-struct uri_parser * uri_parser_new(void) {
-  return calloc(sizeof(struct uri_parser), 1);
+struct iri_parser * iri_parser_new(void) {
+  return calloc(sizeof(struct iri_parser), 1);
 }
 
-void uri_parser_free(struct uri_parser * up) {
+void iri_parser_free(struct iri_parser * up) {
   clear(up);
   free(up);
 }
 
-const char * uri_parser_address(const struct uri_parser * up) {
+const char * iri_parser_address(const struct iri_parser * up) {
   return up->address;
 }
 
-const char * uri_parser_path(const struct uri_parser * up) {
-  return up->path;
+const char * iri_parser_resource(const struct iri_parser * up) {
+  return up->resource;
 }
 
 static int is_alpha(uint_fast32_t c) {
@@ -262,7 +262,7 @@ Note: Here, path char includes '/', segments are not handled individually (Compa
 
 */
 
-int uri_parser_parse(struct uri_parser * up, const char * uri, size_t uri_size) {
+int iri_parser_parse(struct iri_parser * up, const char * iri, size_t iri_size) {
   // host/port string slice markers
   const char * address_begin = NULL;
   const char * address_end = NULL;
@@ -270,22 +270,25 @@ int uri_parser_parse(struct uri_parser * up, const char * uri, size_t uri_size) 
   const char * pqf_begin = NULL;
   const char * pqf_end = NULL;
   // Read location & upper bound
-  const char * read_ptr = uri;
-  const char * read_end = uri + uri_size;
+  const char * read_ptr = iri;
+  const char * read_end = iri + iri_size;
 
   uint_fast32_t c;
   int c_size;
 
+  assert(up);
+  assert(iri);
+
   // Null select
-  if(uri_size < strlen("gemini://")) {
+  if(iri_size < strlen("gemini://")) {
     return 1;
   }
-  if(strncmp(uri, "gemini://", strlen("gemini://"))) {
+  if(strncmp(iri, "gemini://", strlen("gemini://"))) {
     return 1;
   }
 
   // Consume
-  read_ptr = uri + strlen("gemini://");
+  read_ptr = iri + strlen("gemini://");
 
   // Select
   if(read_ptr == read_end) { return 1; }
@@ -408,7 +411,7 @@ parse_complete:
   }
 
   if(pqf_end != pqf_begin) {
-    up->path = new_str(pqf_begin, pqf_end);
+    up->resource = new_str(pqf_begin, pqf_end);
   }
 
   return 0;
@@ -416,10 +419,10 @@ parse_complete:
 
 #ifdef TEST
 
-struct uri_test_case {
-  const char * uri;
+struct iri_test_case {
+  const char * iri;
   const char * address;
-  const char * path;
+  const char * resource;
   int return_value;
 };
 
@@ -430,7 +433,7 @@ struct utf8_test_case {
   int return_value;
 };
 
-static const struct uri_test_case uri_test_cases[] = {
+static const struct iri_test_case iri_test_cases[] = {
   { "",                                       NULL,                         NULL,               1 },
   { "g",                                      NULL,                         NULL,               1 },
   { "ge",                                     NULL,                         NULL,               1 },
@@ -531,15 +534,15 @@ static const struct utf8_test_case utf8_test_cases[] = {
   { { 0xF0, 0x10, 0x0D, 0x08       }, 4, 0x000000, 0 },
 };
 
-void test_uri_parser_case(const struct uri_test_case * test_case) {
-  struct uri_parser * parser;
+void test_iri_parser_case(const struct iri_test_case * test_case) {
+  struct iri_parser * parser;
   int rval;
 
-  parser = uri_parser_new();
+  parser = iri_parser_new();
 
-  log_info("%s", test_case->uri);
+  log_info("%s", test_case->iri);
 
-  rval = uri_parser_parse(parser, test_case->uri, strlen(test_case->uri));
+  rval = iri_parser_parse(parser, test_case->iri, strlen(test_case->iri));
 
   assert(rval == test_case->return_value);
 
@@ -549,13 +552,13 @@ void test_uri_parser_case(const struct uri_test_case * test_case) {
     assert(!parser->address);
   }
 
-  if(test_case->path) {
-    assert(parser->path && !strcmp(test_case->path, parser->path));
+  if(test_case->resource) {
+    assert(parser->resource && !strcmp(test_case->resource, parser->resource));
   } else {
-    assert(!parser->path);
+    assert(!parser->resource);
   }
 
-  uri_parser_free(parser);
+  iri_parser_free(parser);
   parser = NULL;
 }
 
@@ -585,8 +588,8 @@ int main(int argc, char ** argv) {
     test_read_utf8_case(utf8_test_cases + i);
   }
 
-  for(unsigned int i = 0 ; i < sizeof(uri_test_cases)/sizeof(*uri_test_cases) ; ++i) {
-    test_uri_parser_case(uri_test_cases + i);
+  for(unsigned int i = 0 ; i < sizeof(iri_test_cases)/sizeof(*iri_test_cases) ; ++i) {
+    test_iri_parser_case(iri_test_cases + i);
   }
 
   return 0;

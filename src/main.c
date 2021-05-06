@@ -2,7 +2,6 @@
 #include <log.h>
 #include <server.h>
 #include <sigs.h>
-#include <uri_parser.h>
 
 #include <event2/util.h>
 #include <event2/event.h>

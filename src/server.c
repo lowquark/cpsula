@@ -2,7 +2,7 @@
 #include <log.h>
 #include <server.h>
 #include <luaenv.h>
-#include <uri_parser.h>
+#include <iri_parser.h>
 
 #include <event2/bufferevent_ssl.h>
 #include <event2/buffer.h>
@@ -208,14 +208,14 @@ static void xbufferevent_write_str(struct bufferevent * bufev, const char * str)
 // optional certificate information. If no data is returned, closes the connection. Otherwise,
 // writes the resultant data chunk to the client's bufferevent object.
 static void client_execute_response(struct client_context * client,
-                                    const struct uri_parser * uri_parser) {
+                                    const struct iri_parser * iri_parser) {
   assert(client);
-  assert(uri_parser);
+  assert(iri_parser);
 
   char sha1_hex_str[41];
 
-  const char * uri_address = uri_parser_address(uri_parser);
-  const char * uri_path = uri_parser_path(uri_parser);
+  const char * iri_address = iri_parser_address(iri_parser);
+  const char * iri_resource = iri_parser_resource(iri_parser);
   const char * cert_digest = NULL;
   time_t cert_expiry = 0;
 
@@ -236,8 +236,8 @@ static void client_execute_response(struct client_context * client,
   client->script_request_handler = luaenv_request_new(client->server_context->script_env);
 
   luaenv_request_execute(client->script_request_handler,
-                         uri_address,
-                         uri_path,
+                         iri_address,
+                         iri_resource,
                          cert_digest,
                          cert_expiry);
 
@@ -273,22 +273,22 @@ static void client_continue_response(struct client_context * client) {
 static void parse_and_respond(struct client_context * client,
                               const char * request,
                               size_t request_size) {
-  struct uri_parser * uri_parser;
+  struct iri_parser * iri_parser;
 
   assert(client);
   assert(request);
 
-  uri_parser = uri_parser_new();
+  iri_parser = iri_parser_new();
 
-  if(uri_parser_parse(uri_parser, request, request_size)) {
+  if(iri_parser_parse(iri_parser, request, request_size)) {
     log_warning("Rejecting malformed URL");
     xbufferevent_write_str(client->buffer_event, err_header_59_malformed_uri);
   } else {
     log_info("Handling request for %.*s", (int)request_size, request);
-    client_execute_response(client, uri_parser);
+    client_execute_response(client, iri_parser);
   }
 
-  uri_parser_free(uri_parser);
+  iri_parser_free(iri_parser);
 }
 
 static void client_readcb(struct bufferevent * buffer_event, void * user_data) {
