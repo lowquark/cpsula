@@ -23,6 +23,7 @@ return function(address, resource, fingerprint, expiry)
   print(address, resource, fingerprint, expiry);
   return coroutine.wrap(function()
     coroutine.yield('20 text/gemini\r\n')
+    coroutine.yield('=> localhost/ä\n')
     for i=0,10 do
       coroutine.yield('test '..tostring(i)..' : '..resource..' from '..address..'\n')
     end

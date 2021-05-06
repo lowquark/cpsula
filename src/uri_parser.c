@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 struct uri_parser {
@@ -34,36 +35,146 @@ const char * uri_parser_path(const struct uri_parser * up) {
   return up->path;
 }
 
-static int is_alpha(int c) {
+static int is_alpha(uint_fast32_t c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-static int is_digit(int c) {
+static int is_digit(uint_fast32_t c) {
   return (c >= '0' && c <= '9');
 }
 
-static int is_unreserved(int c) {
-  return is_alpha(c) || is_digit(c) || c == '-' || c == '.' || c == '_' || c == '~';
+// https://tools.ietf.org/html/rfc3987#section-2.2
+static int is_ucs(uint_fast32_t c) {
+  // TODO: This is itching to be optimized
+  return (c >= 0x000A0 && c <= 0x0D7FF) || (c >= 0x0F900 && c <= 0x0FDCF) || (c >= 0x0FDF0 && c <= 0x0FFEF) ||
+         (c >= 0x10000 && c <= 0x1FFFD) || (c >= 0x20000 && c <= 0x2FFFD) || (c >= 0x30000 && c <= 0x3FFFD) ||
+         (c >= 0x40000 && c <= 0x4FFFD) || (c >= 0x50000 && c <= 0x5FFFD) || (c >= 0x60000 && c <= 0x6FFFD) ||
+         (c >= 0x70000 && c <= 0x7FFFD) || (c >= 0x80000 && c <= 0x8FFFD) || (c >= 0x90000 && c <= 0x9FFFD) ||
+         (c >= 0xA0000 && c <= 0xAFFFD) || (c >= 0xB0000 && c <= 0xBFFFD) || (c >= 0xC0000 && c <= 0xCFFFD) ||
+         (c >= 0xD0000 && c <= 0xDFFFD) || (c >= 0xE1000 && c <= 0xEFFFD);
 }
 
-static int is_sub_delim(int c) {
+static int is_private(uint_fast32_t c) {
+  // TODO: This is itching to be optimized
+  return (c >= 0xE000 && c <= 0xF8FF) || (c >= 0xF0000 && c <= 0xFFFFD) || (c >= 0x100000 && c <= 0x10FFFD);
+}
+
+static int is_unreserved(uint_fast32_t c) {
+  return is_alpha(c) || is_digit(c) || is_ucs(c) || c == '-' || c == '.' || c == '_' || c == '~';
+}
+
+static int is_sub_delim(uint_fast32_t c) {
   return c == '!' || c == '$' || c == '&' || c == '\'' || c == '(' || c == ')' || c == '*' || c == '+' || c == ',' || c == ';' || c == '=';
 }
 
-static int is_host_char(int c) {
+static int is_host_char(uint_fast32_t c) {
   return is_unreserved(c) || is_sub_delim(c) || c == '%';
 }
 
-static int is_path_char(int c) {
+static int is_path_char(uint_fast32_t c) {
   return is_unreserved(c) || is_sub_delim(c) || c == '%' || c == ':' || c == '@' || c == '/';
 }
 
-static int is_query_char(int c) {
+static int is_query_char(uint_fast32_t c) {
+  return is_unreserved(c) || is_sub_delim(c) || is_private(c) || c == '%' || c == ':' || c == '@' || c == '/' || c == '?';
+}
+
+static int is_fragment_char(uint_fast32_t c) {
   return is_unreserved(c) || is_sub_delim(c) || c == '%' || c == ':' || c == '@' || c == '/' || c == '?';
 }
 
-static int is_fragment_char(int c) {
-  return is_unreserved(c) || is_sub_delim(c) || c == '%' || c == ':' || c == '@' || c == '/' || c == '?';
+static int read_char_utf8(uint_fast32_t * codepoint_out, const char * read_ptr, const char * read_end) {
+  uint_fast32_t codepoint;
+  size_t valid_size;
+  uint_fast32_t c;
+  uint_fast32_t bit;
+
+  assert(codepoint_out);
+  assert(read_ptr);
+  assert(read_end);
+  assert(read_ptr <= read_end);
+
+  valid_size = read_end - read_ptr;
+  if(valid_size == 0) { return 0; }
+
+  c = *read_ptr++;
+  bit = 0x80;
+
+  if(!(c & bit)) {
+    // This is a regular ASCII byte
+    *codepoint_out = c;
+    return 1;
+  }
+
+  bit >>= 1;
+
+  if(!(c & bit)) {
+    // This is a continuation byte
+    return 0;
+  }
+
+  bit >>= 1;
+
+  if(!(c & bit)) {
+    // This is a 2-byte code
+    if(valid_size < 2) { return 0; }
+
+    codepoint = (c & 0x1F) << 6;
+
+    c = *read_ptr++;
+    if((c & 0xC0) != 0x80) { return 0; }
+    codepoint |= (c & 0x3F);
+
+    *codepoint_out = codepoint;
+    return 2;
+  }
+
+  bit >>= 1;
+
+  if(!(c & bit)) {
+    // This is a 3-byte code
+    if(valid_size < 3) { return 0; }
+
+    codepoint = (c & 0x0F) << 12;
+
+    c = *read_ptr++;
+    codepoint |= (c & 0x3F) << 6;
+    if((c & 0xC0) != 0x80) { return 0; }
+
+    c = *read_ptr++;
+    codepoint |= (c & 0x3F);
+    if((c & 0xC0) != 0x80) { return 0; }
+
+    *codepoint_out = codepoint;
+    return 3;
+  }
+
+  bit >>= 1;
+
+  if(!(c & bit)) {
+    // This is a 4-byte code
+    if(valid_size < 4) { return 0; }
+
+    codepoint = (c & 0x07) << 18;
+
+    c = *read_ptr++;
+    codepoint |= (c & 0x3F) << 12;
+    if((c & 0xC0) != 0x80) { return 0; }
+
+    c = *read_ptr++;
+    codepoint |= (c & 0x3F) << 6;
+    if((c & 0xC0) != 0x80) { return 0; }
+
+    c = *read_ptr++;
+    codepoint |= (c & 0x3F);
+    if((c & 0xC0) != 0x80) { return 0; }
+
+    *codepoint_out = codepoint;
+    return 4;
+  }
+
+  // Too many 1s
+  return 0;
 }
 
 static char * new_str(const char * begin, const char * end) {
@@ -75,28 +186,34 @@ static char * new_str(const char * begin, const char * end) {
 }
 
 int uri_parser_parse(struct uri_parser * up, const char * uri, size_t uri_size) {
+  // host/port string slice markers
   const char * address_begin = NULL;
   const char * address_end = NULL;
+  // Path, query, fragment string slice markers
   const char * pqf_begin = NULL;
   const char * pqf_end = NULL;
+  // Read location & upper bound
   const char * read_ptr = uri;
   const char * read_end = uri + uri_size;
 
-  char c;
+  uint_fast32_t c;
+  int c_size;
 
+  // Null select
   if(uri_size < strlen("gemini://")) {
     return 1;
   }
-
   if(strncmp(uri, "gemini://", strlen("gemini://"))) {
     return 1;
   }
 
+  // A consume
   read_ptr = uri + strlen("gemini://");
 
   // A select
   if(read_ptr == read_end) { return 1; }
-  c = *read_ptr;
+  c_size = read_char_utf8(&c, read_ptr, read_end);
+  if(!c_size) { return 1; }
   if(!is_host_char(c)) { return 1; }
 
   // B consume
@@ -104,13 +221,13 @@ int uri_parser_parse(struct uri_parser * up, const char * uri, size_t uri_size) 
 
   for(;;) {
     // B/C consume
-    assert(is_host_char(*read_ptr));
-    ++read_ptr;
+    read_ptr += c_size;
     address_end = read_ptr;
 
     // B/C select
     if(read_ptr == read_end) { goto parse_complete; }
-    c = *read_ptr;
+    c_size = read_char_utf8(&c, read_ptr, read_end);
+    if(!c_size) { return 1; }
     if(c == ':') { goto parse_port; }
     else if(c == '/') { goto parse_path; }
     else if(c == '?') { goto parse_query; }
@@ -121,23 +238,25 @@ int uri_parser_parse(struct uri_parser * up, const char * uri, size_t uri_size) 
 parse_port:
   // D consume
   assert(*read_ptr == ':');
-  ++read_ptr;
+  read_ptr += c_size;
   address_end = read_ptr;
 
   // D select
   if(read_ptr == read_end) { return 1; }
-  c = *read_ptr;
+  c_size = read_char_utf8(&c, read_ptr, read_end);
+  if(!c_size) { return 1; }
   if(!is_digit(c)) { return 1; }
 
   for(;;) {
     // E consume
     assert(is_digit(*read_ptr));
-    ++read_ptr;
+    read_ptr += c_size;
     address_end = read_ptr;
 
     // E select
     if(read_ptr == read_end) { goto parse_complete; }
-    c = *read_ptr;
+    c_size = read_char_utf8(&c, read_ptr, read_end);
+    if(!c_size) { return 1; }
     if(c == '/') { goto parse_path; }
     else if(c == '?') { goto parse_query; }
     else if(c == '#') { goto parse_fragment; }
@@ -151,12 +270,13 @@ parse_path:
 
   for(;;) {
     // F/G consume
-    ++read_ptr;
+    read_ptr += c_size;
     pqf_end = read_ptr;
 
     // F/G select
     if(read_ptr == read_end) { goto parse_complete; }
-    c = *read_ptr;
+    c_size = read_char_utf8(&c, read_ptr, read_end);
+    if(!c_size) { return 1; }
     if(c == '?') { goto parse_query; }
     else if(c == '#') { goto parse_fragment; }
     else if(!is_path_char(c)) { return 1; }
@@ -171,12 +291,13 @@ parse_query:
 
   for(;;) {
     // H/I consume
-    ++read_ptr;
+    read_ptr += c_size;
     pqf_end = read_ptr;
 
     // H/I select
     if(read_ptr == read_end) { goto parse_complete; }
-    c = *read_ptr;
+    c_size = read_char_utf8(&c, read_ptr, read_end);
+    if(!c_size) { return 1; }
     if(c == '#') { goto parse_fragment; }
     else if(!is_query_char(c)) { return 1; }
   }
@@ -190,12 +311,13 @@ parse_fragment:
 
   for(;;) {
     // J/K consume
-    ++read_ptr;
+    read_ptr += c_size;
     pqf_end = read_ptr;
 
     // J/K select
     if(read_ptr == read_end) { goto parse_complete; }
-    c = *read_ptr;
+    c_size = read_char_utf8(&c, read_ptr, read_end);
+    if(!c_size) { return 1; }
     if(!is_fragment_char(c)) { return 1; }
   }
 
@@ -222,6 +344,13 @@ struct uri_test_case {
   int return_value;
 };
 
+struct utf8_test_case {
+  uint8_t data[5];
+  size_t length;
+  uint_fast32_t codepoint;
+  int return_value;
+};
+
 static const struct uri_test_case uri_test_cases[] = {
   { "",                                       NULL,                         NULL,                1 },
   { "g",                                      NULL,                         NULL,                1 },
@@ -234,6 +363,7 @@ static const struct uri_test_case uri_test_cases[] = {
   { "gemini:/",                               NULL,                         NULL,                1 },
   { "gemini://",                              NULL,                         NULL,                1 },
   { "gemini://a",                             "a",                          NULL,                0 },
+  { "gemini://ä",                             "ä",                          NULL,                0 },
   { "gemini://aa",                            "aa",                         NULL,                0 },
   { "gemini://aa.bb",                         "aa.bb",                      NULL,                0 },
   { "gemini://aa.bb:0",                       "aa.bb:0",                    NULL,                0 },
@@ -280,6 +410,48 @@ static const struct uri_test_case uri_test_cases[] = {
   { "gemini://test:/asdf",                    NULL,                         NULL,                1 },
 };
 
+static const struct utf8_test_case utf8_test_cases[] = {
+  // Encodings of zero
+  { { 0x00                         }, 1, 0x000000, 1 },
+  { { 0xC0, 0x80                   }, 2, 0x000000, 2 },
+  { { 0xE0, 0x80, 0x80             }, 3, 0x000000, 3 },
+  { { 0xF0, 0x80, 0x80, 0x80       }, 4, 0x000000, 4 },
+  // Encodings from Wikipedia
+  { { 0x24                         }, 1, 0x000024, 1 },
+  { { 0xC2, 0xA2                   }, 2, 0x0000A2, 2 },
+  { { 0xE0, 0xA4, 0xB9             }, 3, 0x000939, 3 },
+  { { 0xE2, 0x82, 0xAC             }, 3, 0x0020AC, 3 },
+  { { 0xED, 0x95, 0x9C             }, 3, 0x00D55C, 3 },
+  { { 0xF0, 0x90, 0x8D, 0x88       }, 4, 0x010348, 4 },
+  // Encodings of U+070F
+  { { 0xDC, 0x8F                   }, 2, 0x00070F, 2 },
+  { { 0xE0, 0x9C, 0x8F             }, 3, 0x00070F, 3 },
+  { { 0xF0, 0x80, 0x9C, 0x8F       }, 4, 0x00070F, 4 },
+  // Encodings of zero + extra byte
+  { { 0x00, 0xFF                   }, 2, 0x000000, 1 },
+  { { 0xC0, 0x80, 0xFF             }, 3, 0x000000, 2 },
+  { { 0xE0, 0x80, 0x80, 0xFF       }, 4, 0x000000, 3 },
+  { { 0xF0, 0x80, 0x80, 0x80, 0xFF }, 5, 0x000000, 4 },
+  // End of buffer
+  { {                              }, 0, 0x000000, 0 },
+  // Continuation bytes only
+  { { 0x80                         }, 1, 0x000000, 0 },
+  { { 0x80, 0x00                   }, 2, 0x000000, 0 },
+  // Invalid bytes
+  { { 0xF8                         }, 1, 0x000000, 0 },
+  { { 0xFC                         }, 1, 0x000000, 0 },
+  { { 0xFE                         }, 1, 0x000000, 0 },
+  { { 0xFF                         }, 1, 0x000000, 0 },
+  // Truncated encodings
+  { { 0xC2                         }, 1, 0x000000, 0 },
+  { { 0xE0, 0xA4                   }, 2, 0x000000, 0 },
+  { { 0xF0, 0x90, 0x8D             }, 3, 0x000000, 0 },
+  // Bad continuation bytes
+  { { 0xC2, 0x22                   }, 2, 0x000000, 0 },
+  { { 0xE0, 0x24, 0x39             }, 3, 0x000000, 0 },
+  { { 0xF0, 0x10, 0x0D, 0x08       }, 4, 0x000000, 0 },
+};
+
 void test_uri_parser_case(const struct uri_test_case * test_case) {
   struct uri_parser * parser;
   int rval;
@@ -308,8 +480,29 @@ void test_uri_parser_case(const struct uri_test_case * test_case) {
   parser = NULL;
 }
 
+void test_read_utf8_case(const struct utf8_test_case * test_case) {
+  uint_fast32_t codepoint;
+  int rval = read_char_utf8(&codepoint, (const char *)test_case->data, (const char *)test_case->data + test_case->length);
+
+  fprintf(stderr, "[ ");
+  for(size_t i = 0 ; i < test_case->length ; ++i) {
+    fprintf(stderr, "%02X ", test_case->data[i]);
+  }
+  fprintf(stderr, "]\n");
+
+  assert(rval == test_case->return_value);
+
+  if(rval) {
+    assert(codepoint == test_case->codepoint);
+  }
+}
+
 int main(int argc, char ** argv) {
   log_init(stderr);
+
+  for(unsigned int i = 0 ; i < sizeof(utf8_test_cases)/sizeof(*utf8_test_cases) ; ++i) {
+    test_read_utf8_case(utf8_test_cases + i);
+  }
 
   for(unsigned int i = 0 ; i < sizeof(uri_test_cases)/sizeof(*uri_test_cases) ; ++i) {
     test_uri_parser_case(uri_test_cases + i);
