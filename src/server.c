@@ -8,8 +8,6 @@
 #include <event2/buffer.h>
 #include <event2/listener.h>
 #include <openssl/err.h>
-#include <openssl/rand.h>
-#include <openssl/ssl.h>
 
 #include <assert.h>
 #include <stdio.h>
@@ -27,25 +25,6 @@
 const char * main_file = "main.lua";
 
 static const unsigned short gemini_port = 1965;
-
-static const char gemini_allowed_ciphers[] = 
-  "ECDHE-ECDSA-AES128-GCM-SHA256:"
-  "ECDHE-RSA-AES128-GCM-SHA256:"
-  "ECDHE-ECDSA-AES256-GCM-SHA384:"
-  "ECDHE-RSA-AES256-GCM-SHA384:"
-  "ECDHE-ECDSA-CHACHA20-POLY1305:"
-  "ECDHE-RSA-CHACHA20-POLY1305:"
-  "DHE-RSA-AES128-GCM-SHA256:"
-  "DHE-RSA-AES256-GCM-SHA384:"
-  "TLS_AES_128_GCM_SHA256:"
-  "TLS_AES_256_GCM_SHA384:"
-  "TLS_CHACHA20_POLY1305_SHA256";
-
-static const int gemini_min_protocol_version = TLS1_2_VERSION;
-
-// TODO: Create a config module
-static const char certificate_file_path[] = "./cert";
-static const char private_key_file_path[] = "./pkey";
 
 #define CLIENT_MAX_REQUEST_SIZE (1026)
 
@@ -430,78 +409,15 @@ static void server_accept_cb(struct evconnlistener * listener,
   client_init(client_context, server_context, socket_fd);
 }
 
-static int ssl_verify_cb(X509_STORE_CTX * x509_store, void * user_data) {
-  return 1;
-}
-
-static SSL_CTX * new_ssl_context(void) {
-  SSL_CTX * server_ctx;
-  int rval;
-
-  ERR_load_crypto_strings();
-  SSL_load_error_strings();
-  SSL_library_init();
-
-  if(!RAND_poll()) {
-    log_error("Failed to seed RNG (RAND_poll)");
-    exit(1);
-  }
-
-  server_ctx = SSL_CTX_new(TLS_server_method());
-  if(!server_ctx) {
-    log_error("SSL_CTX_new() failed");
-    exit(1);
-  }
-
-  rval = SSL_CTX_set_min_proto_version(server_ctx, gemini_min_protocol_version);
-  if(!rval) {
-    log_error("SSL_CTX_set_min_proto_version() failed");
-    exit(1);
-  }
-
-  rval = SSL_CTX_set_cipher_list(server_ctx, gemini_allowed_ciphers);
-  if(!rval) {
-    log_error("SSL_CTX_set_cipher_list() failed");
-    exit(1);
-  }
-
-  rval = SSL_CTX_set_tlsext_servername_callback(server_ctx, NULL);
-  if(!rval) {
-    log_error("SSL_CTX_set_tlsext_servername_callback() failed");
-    exit(1);
-  }
-
-  SSL_CTX_set_options(server_ctx, SSL_OP_NO_SSLv2);
-
-  SSL_CTX_set_verify(server_ctx, SSL_VERIFY_PEER, NULL);
-
-  SSL_CTX_set_cert_verify_callback(server_ctx, ssl_verify_cb, NULL);
-
-  rval = SSL_CTX_set_options(server_ctx, SSL_OP_NO_RENEGOTIATION);
-  if(!rval) {
-    log_error("Yikes. Disabling renegotiation failed");
-    exit(1);
-  }
-
-  if(!SSL_CTX_use_certificate_chain_file(server_ctx, certificate_file_path)) {
-    log_error("Failed to read certificate file '%s'", certificate_file_path);
-    exit(1);
-  }
-
-  if(!SSL_CTX_use_PrivateKey_file(server_ctx, private_key_file_path, SSL_FILETYPE_PEM)) {
-    log_error("Failed to read private key file '%s'", private_key_file_path);
-    exit(1);
-  }
-
-  return server_ctx;
-}
-
 static struct server_context * global_server_context;
 
-void server_init(struct event_base * event_base) {
+void server_init(struct event_base * event_base, SSL_CTX * ssl_context) {
+  assert(event_base);
+  assert(ssl_context);
+
   global_server_context = (struct server_context *)malloc(sizeof(*global_server_context));
 
-  global_server_context->ssl_context = new_ssl_context();
+  global_server_context->ssl_context = ssl_context;
 
   global_server_context->event_base = event_base;
 
@@ -529,16 +445,15 @@ void server_init(struct event_base * event_base) {
 }
 
 void server_deinit() {
-  luaenv_context_free(global_server_context->script_env);
-  global_server_context->script_env = NULL;
-
-  SSL_CTX_free(global_server_context->ssl_context);
   global_server_context->ssl_context = NULL;
 
   global_server_context->event_base = NULL;
 
   evconnlistener_free(global_server_context->listener);
   global_server_context->listener = NULL;
+
+  luaenv_context_free(global_server_context->script_env);
+  global_server_context->script_env = NULL;
 
   free(global_server_context);
   global_server_context = NULL;
