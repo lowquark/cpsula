@@ -15,6 +15,9 @@
 #include <limits.h>
 #include <pwd.h>
 
+// TODO: Read from config file
+const char default_data_user[] = "gemini-data";
+
 int main(int argc, char ** argv) {
   ERR_load_crypto_strings();
   SSL_load_error_strings();
@@ -24,27 +27,30 @@ int main(int argc, char ** argv) {
 
   SSL_CTX * ssl_context = ssl_ctx_new();
 
-  // Initialize libevent by creating a libevent base
-  struct event_base * base = event_base_new();
-  if(!base) {
-    log_error("event_base_new() failed!\n");
+  if(!ssl_context) {
+    log_error("Failed to create SSL context\n");
     return 1;
   }
 
-  /*
-  char hostname[HOST_NAME_MAX+1];
-  gethostname(hostname, sizeof(hostname));
-  log_info("Hostname: %s", hostname);
-  */
-
-  /*
-  struct passwd * p = getpwnam("http");
+  struct passwd * p = getpwnam(default_data_user);
   if(p) {
-    log_info("setuid(%d);", p->pw_uid);
-    setuid(p->pw_uid);
-    log_info("%s", strerror(errno));
+    if(setuid(p->pw_uid)) {
+      log_warning("setuid() failed: %s", strerror(errno));
+    }
+  } else {
+    log_warning("User %s not found", default_data_user);
   }
-  */
+
+  if(getuid() == 0) {
+    log_error("Refusing to run as root");
+    exit(1);
+  }
+
+  struct event_base * base = event_base_new();
+  if(!base) {
+    log_error("event_base_new() failed\n");
+    return 1;
+  }
 
   server_init(base, ssl_context);
   sigs_init(base);
