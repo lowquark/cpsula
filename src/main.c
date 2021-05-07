@@ -16,12 +16,20 @@
 #include <limits.h>
 #include <pwd.h>
 
+static const char default_config_file[] = "/etc/cpsula/cpsula.conf";
+
 int main(int argc, char ** argv) {
   ERR_load_crypto_strings();
   SSL_load_error_strings();
   SSL_library_init();
 
   log_init(stderr);
+
+  if(argc >= 2) {
+    cfg_init(argv[1]);
+  } else {
+    cfg_init(default_config_file);
+  }
 
   SSL_CTX * ssl_context = ssl_ctx_new();
 
@@ -68,6 +76,8 @@ int main(int argc, char ** argv) {
 
   SSL_CTX_free(ssl_context);
   ssl_context = NULL;
+
+  cfg_deinit();
 
   return 0;
 }

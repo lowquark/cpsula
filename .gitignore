@@ -1,6 +1,6 @@
 /cpsula
-/pkey
-/cert
-/cert.req
-*.o
+/ssl
 /test
+/cpsula.conf
+/run
+*.o
