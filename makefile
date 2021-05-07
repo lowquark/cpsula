@@ -1,15 +1,29 @@
 
-TARGET=cpsula
+SERVER_TARGET=cpsula
 
-all: $(TARGET) test/test_iri_parser
+SERVER_OBJECTS=    \
+	src/main.o       \
+	src/server.o     \
+	src/sigs.o       \
+	src/log.o        \
+	src/luaenv.o     \
+	src/iri_parser.o \
+	src/ssl_init.o   \
+	src/config.o     \
 
-$(TARGET): src/main.o src/server.o src/sigs.o src/log.o src/luaenv.o src/iri_parser.o src/ssl_init.o src/config.o
-	gcc -Wall -g -o $@ $^ -levent -lssl -lcrypto -levent_openssl -llua
+SERVER_CFLAGS=-Wall -g -Isrc/
+
+SERVER_LFLAGS=-levent -lssl -lcrypto -levent_openssl -llua
+
+$(SERVER_TARGET): $(SERVER_OBJECTS)
+	gcc $(SERVER_CFLAGS) -o $@ $^ $(SERVER_LFLAGS)
+
+%.o: %.c
+	gcc $(SERVER_CFLAGS) -c -o $@ $^
+
+tests: test/test_iri_parser
 
 test/test_iri_parser: src/iri_parser.c src/log.c
 	@mkdir -p $(@D)
-	gcc -Wall -g -Isrc/ -DTEST -o $@ $^
-
-%.o: %.c
-	gcc -Wall -g -Isrc/ -c -o $@ $^
+	gcc $(SERVER_CFLAGS) -DTEST -o $@ $^
 
