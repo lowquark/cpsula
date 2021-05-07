@@ -1,5 +1,5 @@
-#ifndef RBVDIN_H
-#define RBVDIN_H
+#ifndef SERVER_H
+#define SERVER_H
 
 #include <event2/event.h>
 
