@@ -1,4 +1,5 @@
 
+#include <config.h>
 #include <log.h>
 #include <ssl_init.h>
 
@@ -19,10 +20,6 @@ static const char allowed_ciphers[] =
 
 static const int min_protocol_version = TLS1_2_VERSION;
 
-// TODO: Create a config module
-static const char certificate_file_path[] = "./cert";
-static const char private_key_file_path[] = "./pkey";
-
 static int ssl_verify_cb(X509_STORE_CTX * x509_store, void * user_data) {
   return 1;
 }
@@ -30,6 +27,8 @@ static int ssl_verify_cb(X509_STORE_CTX * x509_store, void * user_data) {
 SSL_CTX * ssl_ctx_new(void) {
   SSL_CTX * server_ctx;
   int rval;
+  const char * cert_file;
+  const char * cert_key_file;
 
   if(!RAND_poll()) {
     log_error("Failed to seed RNG (RAND_poll)");
@@ -72,13 +71,15 @@ SSL_CTX * ssl_ctx_new(void) {
     exit(1);
   }
 
-  if(!SSL_CTX_use_certificate_chain_file(server_ctx, certificate_file_path)) {
-    log_error("Failed to read certificate file '%s'", certificate_file_path);
+  cert_file = cfg_certificate_file();
+  if(!SSL_CTX_use_certificate_chain_file(server_ctx, cert_file)) {
+    log_error("Failed to read certificate file '%s'", cert_file);
     exit(1);
   }
 
-  if(!SSL_CTX_use_PrivateKey_file(server_ctx, private_key_file_path, SSL_FILETYPE_PEM)) {
-    log_error("Failed to read private key file '%s'", private_key_file_path);
+  cert_key_file = cfg_certificate_key_file();
+  if(!SSL_CTX_use_PrivateKey_file(server_ctx, cert_key_file, SSL_FILETYPE_PEM)) {
+    log_error("Failed to read private key file '%s'", cert_key_file);
     exit(1);
   }
 

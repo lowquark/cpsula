@@ -1,4 +1,5 @@
 
+#include <config.h>
 #include <log.h>
 #include <server.h>
 #include <sigs.h>
@@ -15,9 +16,6 @@
 #include <limits.h>
 #include <pwd.h>
 
-// TODO: Read from config file
-const char default_data_user[] = "gemini-data";
-
 int main(int argc, char ** argv) {
   ERR_load_crypto_strings();
   SSL_load_error_strings();
@@ -32,13 +30,14 @@ int main(int argc, char ** argv) {
     return 1;
   }
 
-  struct passwd * p = getpwnam(default_data_user);
+  const char * user = cfg_user();
+  struct passwd * p = getpwnam(user);
   if(p) {
     if(setuid(p->pw_uid)) {
       log_warning("setuid() failed: %s", strerror(errno));
     }
   } else {
-    log_warning("User %s not found", default_data_user);
+    log_warning("User %s not found", user);
   }
 
   if(getuid() == 0) {
@@ -51,6 +50,8 @@ int main(int argc, char ** argv) {
     log_error("event_base_new() failed\n");
     return 1;
   }
+
+  chdir(cfg_root_directory());
 
   server_init(base, ssl_context);
   sigs_init(base);

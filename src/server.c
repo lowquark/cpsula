@@ -1,4 +1,5 @@
 
+#include <config.h>
 #include <log.h>
 #include <server.h>
 #include <luaenv.h>
@@ -22,18 +23,12 @@
 #include <sys/socket.h>
 #endif
 
-const char * main_file = "main.lua";
-
-static const unsigned short gemini_port = 1965;
-
 #define CLIENT_MAX_REQUEST_SIZE (1026)
 
 static const char err_header_59_size_exceeded[] = "59 Request size limit exceeded.\r\n";
 static const char err_header_59_malformed_uri[] = "59 Malformed URI.\r\n";
 static const char err_header_62_not_yet_valid[] = "62 Not yet valid.\r\n";
 static const char err_header_62_expired[]       = "62 Expired.\r\n";
-
-#define LITERAL_AND_LENGTH(x) x, strlen(x)
 
 struct server_context {
   // SSL context object
@@ -423,11 +418,11 @@ void server_init(struct event_base * event_base, SSL_CTX * ssl_context) {
 
   global_server_context->script_env = luaenv_context_new();
 
-  luaenv_context_init(global_server_context->script_env, main_file);
+  luaenv_context_init(global_server_context->script_env, cfg_lua_main());
 
   struct sockaddr_in sin = {0};
   sin.sin_family = AF_INET;
-  sin.sin_port = htons(gemini_port);
+  sin.sin_port = htons(cfg_socket_port());
 
   global_server_context->listener =
     evconnlistener_new_bind(event_base,

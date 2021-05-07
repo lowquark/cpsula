@@ -92,7 +92,6 @@ int luaenv_context_init(luaenv_context * env, const char * main_filepath) {
 
   env->L = luaL_newstate();
   if(env->L) {
-    // TODO: Consider some kind of file io sandboxing?
     luaL_openlibs(env->L);
 
     if(luaL_loadfile(env->L, main_filepath) == LUA_OK) {
