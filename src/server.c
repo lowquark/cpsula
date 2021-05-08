@@ -404,6 +404,78 @@ static void server_accept_cb(struct evconnlistener * listener,
   client_init(client_context, server_context, socket_fd);
 }
 
+static int open_socket_sockaddr(struct server_context * server_context,
+                                struct sockaddr * addr,
+                                size_t addrlen) {
+  server_context->listener =
+    evconnlistener_new_bind(server_context->event_base,
+                            server_accept_cb,
+                            server_context,
+                            LEV_OPT_REUSEABLE | LEV_OPT_CLOSE_ON_FREE,
+                            -1,
+                            addr,
+                            addrlen);
+  return server_context->listener != NULL;
+}
+
+static int open_socket(struct server_context * server_context, const char * hostname, uint16_t port) {
+  int succ;
+  int err;
+
+  struct addrinfo hints;
+  struct addrinfo * result = NULL;
+  struct sockaddr_in sin;
+
+  if(hostname) {
+    succ = 0;
+
+    // Bind to first TCP socket address associated with hostname
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_protocol = 0;
+    hints.ai_canonname = NULL;
+    hints.ai_addr = NULL;
+    hints.ai_next = NULL;
+
+    err = getaddrinfo(hostname, NULL, &hints, &result);
+    if(err) {
+      log_error("getaddrinfo() failed for '%s': %s", hostname, gai_strerror(err));
+    } else {
+      for(struct addrinfo * result_ptr = result ; result_ptr != NULL ; result_ptr = result_ptr->ai_next) {
+        if(result_ptr->ai_family == PF_INET) {
+          ((struct sockaddr_in *)result_ptr->ai_addr)->sin_port = htons(port);
+        } else if(result_ptr->ai_family == PF_INET6) {
+          ((struct sockaddr_in6 *)result_ptr->ai_addr)->sin6_port = htons(port);
+        } else {
+          log_warning("Unexpected ai_family value: %d", result_ptr->ai_family);
+          break;
+        }
+
+        if(open_socket_sockaddr(server_context, result_ptr->ai_addr, result_ptr->ai_addrlen)) {
+          succ = 1;
+          break;
+        }
+      }
+    }
+
+    freeaddrinfo(result);
+    result = NULL;
+  } else {
+    // Bind to catch-all TCP socket address
+
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_port = htons(port);
+
+    succ = open_socket_sockaddr(server_context, (struct sockaddr *)&sin, sizeof(sin));
+  }
+
+  return succ;
+}
+
 static struct server_context * global_server_context;
 
 void server_init(struct event_base * event_base, SSL_CTX * ssl_context) {
@@ -420,23 +492,17 @@ void server_init(struct event_base * event_base, SSL_CTX * ssl_context) {
 
   luaenv_context_init(global_server_context->script_env, cfg_lua_main());
 
-  struct sockaddr_in sin = {0};
-  sin.sin_family = AF_INET;
-  sin.sin_port = htons(cfg_socket_port());
+  const char * hostname = cfg_socket_address();
+  uint16_t port = cfg_socket_port();
 
-  global_server_context->listener =
-    evconnlistener_new_bind(event_base,
-                            server_accept_cb,
-                            global_server_context,
-                            LEV_OPT_REUSEABLE | LEV_OPT_CLOSE_ON_FREE,
-                            -1,
-                            (struct sockaddr*)&sin,
-                            sizeof(sin));
-
-  if(!global_server_context->listener) {
-    log_error("evconnlistener_new_bind() failed");
+  if(open_socket(global_server_context, hostname, port)) {
+    log_info("Server listening on %s:%hu", hostname ? hostname : "*", port);
+  } else {
+    log_error("Failed to bind to %s:%hu", hostname ? hostname : "*", port);
     exit(1);
   }
+
+  assert(global_server_context->listener);
 }
 
 void server_deinit() {

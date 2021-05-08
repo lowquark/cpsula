@@ -71,6 +71,8 @@ int main(int argc, char ** argv) {
   // One last precaution, lol
   assert(getuid() != 0 && getgid() != 0);
 
+  log_info("uid:%d gid:%d", getuid(), getgid());
+
   chdir(cfg_root_directory());
 
   struct event_base * base = event_base_new();
@@ -81,8 +83,6 @@ int main(int argc, char ** argv) {
 
   server_init(base, ssl_context);
   sigs_init(base);
-
-  log_info("Server initialized  uid:%d  gid:%d", getuid(), getgid());
 
   event_base_dispatch(base);
 
