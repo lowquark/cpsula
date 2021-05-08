@@ -12,8 +12,8 @@ application-level internet protocol with a focus on privacy and security. Its
 simple enough to fit in your head, and comes with an equally minimal
 [markup](https://portal.mozz.us/gemini/gemini.circumlunar.space/docs/gemtext.gmi) specification.
 
-Following this theme of minimalism, `cpsula` is a Gemini server which feeds all requests through a
-single Lua function, aiming to do so with as little code/dependency overhead as possible. While
+Following Gemini's theme of minimalism, `cpsula` is a Gemini server which feeds all requests through
+a single Lua function, aiming to do so with as little code/dependency overhead as possible. While
 existing servers predominantly host static content (albeit with the addition of CGI), `cpsula`
 leverages the simplicity and flexibility of Lua to generate dynamic content to your heart's content.
 
@@ -43,13 +43,13 @@ UTF-8 encoded. The use of unescaped UTF-8 characters in gemtext links is plainly
 having to percent-encode them, and accepting IRIs at the server level is a simple extension of this.
 
 While any server which advertises resources via IRI will inevitably receive escaped URI requests as
-per the Gemini specification, the two are ultimately equivalent. For example, according to the
-fine-grained definitions in [RFC3986](https://tools.ietf.org/html/rfc3986), the ASCII-US encoded URI
-`gemini://foo.bar/%C3%A4` refers to a set of two characters, `0xC3` and `0xA4`. For all intents and
-purposes, these characters denote the single character `ä`, just as the IRI `gemini://foo.bar/ä`
-would. In the context of Lua (and I believe Gemini at large), there is no a practical distinction to
-be made here. The use of IRIs should not cause incompatibility issues, provided clients do not
-reject them altogether.
+per the Gemini specification, the IRI and its escaped URI are ultimately equivalent. For example,
+according to the fine-grained definitions in [RFC3986](https://tools.ietf.org/html/rfc3986), the
+ASCII-US encoded URI `gemini://foo.bar/%C3%A4` technically refers to a set of two characters, `0xC3`
+and `0xA4`. For all intents and purposes, these "two" characters denote the single character `ä`,
+just as the IRI `gemini://foo.bar/ä` would. In the context of Lua (and I believe Gemini at large),
+there is no a practical distinction to be made here. Thus, the use of IRIs by a server should not
+cause incompatibility issues, provided clients do not ignore them altogether.
 
 ### Zero-Configuration Certificate Generation
 
