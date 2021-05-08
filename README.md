@@ -1,7 +1,7 @@
 
 # cpsula
 
-A bare-bones Project Gemini server which serves Lua-generated content, using `libevent` and
+A bare-bones Project Gemini server which serves Lua-generated content using `libevent` and
 `openssl`.
 
 ## Overview
