@@ -11,9 +11,11 @@ SERVER_OBJECTS=    \
 	src/ssl_init.o   \
 	src/config.o     \
 
-SERVER_CFLAGS=-Wall -g -Isrc/
+SERVER_CFLAGS='-DCFG_MAIN_CONFIG_FILE="\"$(CFG_MAIN_CONFIG_FILE)\""' -Wall -g -Isrc/
 
 SERVER_LFLAGS=-levent -lssl -lcrypto -levent_openssl -llua
+
+CFG_MAIN_CONFIG_FILE=/etc/cpsula/cpsula.conf
 
 $(SERVER_TARGET): $(SERVER_OBJECTS)
 	gcc $(SERVER_CFLAGS) -o $@ $^ $(SERVER_LFLAGS)

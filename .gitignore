@@ -1,6 +1,6 @@
 /cpsula
 /ssl
 /test
-/cpsula.conf
+/cpsula.conf.local
 /run
 *.o

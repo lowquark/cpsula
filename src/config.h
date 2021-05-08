@@ -3,6 +3,14 @@
 
 #include <stdint.h>
 
+// Compiled configuration
+
+#ifndef CFG_MAIN_CONFIG_FILE
+#define CFG_MAIN_CONFIG_FILE "/etc/cpsula/cpsula.conf"
+#endif
+
+// Runtime configuration
+
 void cfg_init(const char * file);
 void cfg_deinit(void);
 

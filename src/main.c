@@ -16,8 +16,6 @@
 #include <limits.h>
 #include <pwd.h>
 
-static const char default_config_file[] = "/etc/cpsula/cpsula.conf";
-
 int main(int argc, char ** argv) {
   ERR_load_crypto_strings();
   SSL_load_error_strings();
@@ -28,7 +26,7 @@ int main(int argc, char ** argv) {
   if(argc >= 2) {
     cfg_init(argv[1]);
   } else {
-    cfg_init(default_config_file);
+    cfg_init(CFG_MAIN_CONFIG_FILE);
   }
 
   SSL_CTX * ssl_context = ssl_ctx_new();
@@ -49,17 +47,32 @@ int main(int argc, char ** argv) {
   }
 
   if(getuid() == 0) {
-    log_error("Refusing to run as root");
+    log_error("Refusing to run as root (UID = 0)");
     exit(1);
   }
+
+  const char * group = cfg_group();
+  p = getpwnam(group);
+  if(p) {
+    if(setgid(p->pw_gid)) {
+      log_warning("setgid() failed: %s", strerror(errno));
+    }
+  } else {
+    log_warning("Group %s not found", group);
+  }
+
+  if(getgid() == 0) {
+    log_error("Refusing to run as root (GID = 0)");
+    exit(1);
+  }
+
+  chdir(cfg_root_directory());
 
   struct event_base * base = event_base_new();
   if(!base) {
     log_error("event_base_new() failed\n");
     return 1;
   }
-
-  chdir(cfg_root_directory());
 
   server_init(base, ssl_context);
   sigs_init(base);

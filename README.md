@@ -85,15 +85,17 @@ Next, because Gemini mandates TLS, you will need to generate a certificate and p
 All fields for the certificate request (second command) can be left blank. However, when prompted
 for a CN (Common Name), enter "localhost" if you plan on hosting & connecting locally. Otherwise,
 enter the server's hostname. As indicated by the above configuration, the resulting `pkey` and
-`cert` files should be placed in `./ssl`, and should be accessible by the user that runs the server.
+`cert` files should be placed in `./ssl`. (Normally they would be owned by root, but it's not
+strictly required in this example.)
 
-After reading `pkey` and `cert`, the server will immediately switch user to the user specified in
-the config file.\* At a minimum, that user should have read access to `contrib/main.lua`. The server
-will refuse to continue if running as root by this point.
+After reading `pkey` and `cert`, the server will immediately switch user/group to the those
+specified in the config file. Changing user/group will only work if `cpsula` is run as root, or if
+`<some-user>` and `<some-group>` match the user/group of the user that starts the server. In any
+case, the server will refuse to continue if running as root by this point.
 
 If all goes well, you should see something like this:
 
-    $ ./cpsula cpsula.conf.local
+    # ./cpsula cpsula.conf.local
     20:55:49 Reading configuration from cpsula.conf.local
     20:55:49 Server running (user: <some-user>)
 
@@ -103,6 +105,3 @@ called [amfora](https://github.com/makeworld-the-better-one/amfora).
 You can find the code that generates Gemini pages in 'contrib/main.lua'. There's more
 documentation in that file that goes over specifically how pages are generated.
 
-\*: To reduce security risks, keys are normally found in `/etc/` somewhere, and are only accessible
-to root. The server, run as root, reads these files and then switches to a different user who only
-has access to web-related things.
