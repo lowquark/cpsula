@@ -38,29 +38,24 @@ int main(int argc, char ** argv) {
     return 1;
   }
 
-  const char * group = cfg_group();
-  struct group * g = getgrnam(group);
-  if(g) {
-    if(setgid(g->gr_gid)) {
-      log_warning("setgid() failed for group %s: %s", group, strerror(errno));
+  const char * group_name = cfg_group();
+  struct group * group_struct = getgrnam(group_name);
+  if(group_struct) {
+    if(setgid(group_struct->gr_gid)) {
+      log_warning("setgid() failed for group %s: %s", group_name, strerror(errno));
     }
   } else {
-    log_warning("Unknown group %s", group);
+    log_warning("Unknown group %s", group_name);
   }
 
-  if(getgid() == 0) {
-    log_error("Refusing to run as root (GID = 0)");
-    exit(1);
-  }
-
-  const char * user = cfg_user();
-  struct passwd * p = getpwnam(user);
-  if(p) {
-    if(setuid(p->pw_uid)) {
-      log_warning("setuid() failed for user %s: %s", user, strerror(errno));
+  const char * user_name = cfg_user();
+  struct passwd * passwd_struct = getpwnam(user_name);
+  if(passwd_struct) {
+    if(setuid(passwd_struct->pw_uid)) {
+      log_warning("setuid() failed for user %s: %s", user_name, strerror(errno));
     }
   } else {
-    log_warning("Unknown user %s", user);
+    log_warning("Unknown user %s", user_name);
   }
 
   if(getuid() == 0) {
@@ -68,7 +63,12 @@ int main(int argc, char ** argv) {
     exit(1);
   }
 
-  // One last precaution
+  if(getgid() == 0) {
+    log_error("Refusing to run as root (GID = 0)");
+    exit(1);
+  }
+
+  // One last precaution, lol
   assert(getuid() != 0 && getgid() != 0);
 
   chdir(cfg_root_directory());
