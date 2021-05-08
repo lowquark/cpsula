@@ -10,11 +10,13 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#include <assert.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <limits.h>
 #include <pwd.h>
+#include <grp.h>
 
 int main(int argc, char ** argv) {
   ERR_load_crypto_strings();
@@ -36,14 +38,29 @@ int main(int argc, char ** argv) {
     return 1;
   }
 
+  const char * group = cfg_group();
+  struct group * g = getgrnam(group);
+  if(g) {
+    if(setgid(g->gr_gid)) {
+      log_warning("setgid() failed for group %s: %s", group, strerror(errno));
+    }
+  } else {
+    log_warning("Unknown group %s", group);
+  }
+
+  if(getgid() == 0) {
+    log_error("Refusing to run as root (GID = 0)");
+    exit(1);
+  }
+
   const char * user = cfg_user();
   struct passwd * p = getpwnam(user);
   if(p) {
     if(setuid(p->pw_uid)) {
-      log_warning("setuid() failed: %s", strerror(errno));
+      log_warning("setuid() failed for user %s: %s", user, strerror(errno));
     }
   } else {
-    log_warning("User %s not found", user);
+    log_warning("Unknown user %s", user);
   }
 
   if(getuid() == 0) {
@@ -51,20 +68,8 @@ int main(int argc, char ** argv) {
     exit(1);
   }
 
-  const char * group = cfg_group();
-  p = getpwnam(group);
-  if(p) {
-    if(setgid(p->pw_gid)) {
-      log_warning("setgid() failed: %s", strerror(errno));
-    }
-  } else {
-    log_warning("Group %s not found", group);
-  }
-
-  if(getgid() == 0) {
-    log_error("Refusing to run as root (GID = 0)");
-    exit(1);
-  }
+  // One last precaution
+  assert(getuid() != 0 && getgid() != 0);
 
   chdir(cfg_root_directory());
 
@@ -77,7 +82,7 @@ int main(int argc, char ** argv) {
   server_init(base, ssl_context);
   sigs_init(base);
 
-  log_info("Server running (user: %s)", getlogin());
+  log_info("Server initialized  uid:%d  gid:%d", getuid(), getgid());
 
   event_base_dispatch(base);
 
