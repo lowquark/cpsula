@@ -57,6 +57,8 @@ static EVP_PKEY * read_pkey(const char * filepath) {
 
     fclose(file);
     file = NULL;
+  } else {
+    log_warning("Error reading private key from %s: %s", filepath, strerror(errno));
   }
 
   return pkey;
@@ -109,6 +111,8 @@ static X509 * read_cert(const char * filepath, EVP_PKEY * pkey) {
 
     fclose(file);
     file = NULL;
+  } else {
+    log_warning("Error reading certificate from %s: %s", filepath, strerror(errno));
   }
 
   return cert;
@@ -249,9 +253,9 @@ static EVP_PKEY * read_or_generate_pkey(const char * filepath) {
 
   assert(filepath);
 
-  pkey = read_pkey(filepath);
-
-  if(!pkey) {
+  if(access(filepath, F_OK) == 0) {
+    pkey = read_pkey(filepath);
+  } else {
     pkey = generate_pkey();
     if(pkey) {
       write_pkey(filepath, pkey);
@@ -268,9 +272,9 @@ static X509 * read_or_generate_cert(const char * filepath, const char * hostname
   assert(hostname);
   assert(pkey);
 
-  cert = read_cert(filepath, pkey);
-
-  if(!cert) {
+  if(access(filepath, F_OK) == 0) {
+    cert = read_cert(filepath, pkey);
+  } else {
     cert = generate_cert(hostname, pkey);
     if(cert) {
       write_cert(filepath, cert);
@@ -293,9 +297,7 @@ static int attain_credentials(EVP_PKEY ** pkey_out, X509 ** cert_out) {
     free(filepath);
     filepath = NULL;
   } else {
-    log_error("Failed to load/generate private key: "
-              "neither private key file nor certificate hostname specified in config");
-    return 0;
+    log_error("Neither <private_key_file> nor <certificate_hostname> specified in config");
   }
 
   if(pkey) {
@@ -307,9 +309,7 @@ static int attain_credentials(EVP_PKEY ** pkey_out, X509 ** cert_out) {
       free(filepath);
       filepath = NULL;
     } else {
-      log_error("Failed to load/generate certificate: "
-                "neither certificate file nor certificate hostname specified in config");
-      return 0;
+      log_warning("Neither <certificate_file> nor <certificate_hostname> specified in config");
     }
 
     if(cert) {
@@ -318,12 +318,8 @@ static int attain_credentials(EVP_PKEY ** pkey_out, X509 ** cert_out) {
       return 1;
     }
 
-    log_error("Failed to load certificate");
-
     EVP_PKEY_free(pkey);
     pkey = NULL;
-  } else {
-    log_error("Failed to load private key");
   }
 
   *pkey_out = NULL;
@@ -379,6 +375,7 @@ SSL_CTX * tls_init(void) {
   }
 
   if(!attain_credentials(&server_pkey, &server_cert)) {
+    log_error("Failed to read private key / certificate, cannot start server");
     exit(1);
   }
 
