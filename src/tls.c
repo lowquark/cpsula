@@ -340,8 +340,6 @@ static X509 * server_cert;
 static SSL_CTX * server_ssl_context;
 
 SSL_CTX * tls_init(void) {
-  EVP_PKEY * pkey;
-  X509 * cert;
   int rval;
 
   server_ssl_context = SSL_CTX_new(TLS_server_method());
@@ -380,16 +378,16 @@ SSL_CTX * tls_init(void) {
     exit(1);
   }
 
-  if(!attain_credentials(&pkey, &cert)) {
+  if(!attain_credentials(&server_pkey, &server_cert)) {
     exit(1);
   }
 
-  if(!SSL_CTX_use_PrivateKey(server_ssl_context, pkey)) {
+  if(!SSL_CTX_use_PrivateKey(server_ssl_context, server_pkey)) {
     log_error("SSL_CTX_use_PrivateKey() failed: %s", ERR_reason_error_string(ERR_get_error()));
     exit(1);
   }
 
-  if(!SSL_CTX_use_certificate(server_ssl_context, cert)) {
+  if(!SSL_CTX_use_certificate(server_ssl_context, server_cert)) {
     log_error("Failed to certificate file: %s", ERR_reason_error_string(ERR_get_error()));
     exit(1);
   }
