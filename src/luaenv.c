@@ -120,7 +120,6 @@ int luaenv_context_init(luaenv_context * env, const char * main_filepath) {
   lua_close(env->L);
   env->L = NULL;
 
-  assert(lua_gettop(env->L) == 0);
   return 1;
 }
 
