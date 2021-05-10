@@ -6,17 +6,53 @@
 #include <stdlib.h>
 #include <string.h>
 
-char * parse_key_value(const char * line, const char * key) {
+// Configuration values
+char * private_key_file;
+char * certificate_file;
+char * certificate_hostname;
+
+char * user;
+char * group;
+
+char * bind_address;
+uint16_t bind_port;
+
+char * root_directory;
+char * lua_main;
+
+// Configuration defaults
+const char default_user[] = "gemini-data";
+const char default_group[] = "gemini-data";
+
+const uint16_t default_bind_port = 1965;
+
+const char default_root_directory[] = "/var/gemini";
+const char default_lua_main[] = "main.lua";
+
+static int is_whitespace(uint_fast32_t c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+
+static char * parse_key_value(const char * line, const char * key) {
+  char * colon_loc;
+  char * read_ptr;
+
   if(strncmp(line, key, strlen(key)) == 0) {
-    char * equals_loc = strchr(line, '=');
-    if(equals_loc) {
-      return equals_loc + 1;
+    colon_loc = strchr(line, ':');
+    if(colon_loc) {
+      for(read_ptr = colon_loc + 1 ; *read_ptr ; ++read_ptr) {
+        if(!is_whitespace(*read_ptr)) {
+          return read_ptr;
+        }
+      }
+      return read_ptr;
     }
   }
+
   return NULL;
 }
 
-void set_config_str(char ** var, const char * value) {
+static void set_config_str(char ** var, const char * value) {
   size_t size = strlen(value);
   if(*var) { free(*var); }
   if(size) {
@@ -28,46 +64,21 @@ void set_config_str(char ** var, const char * value) {
   }
 }
 
-
-const char default_certificate_file[] = "/etc/cpsula/private/cert";
-const char default_certificate_key_file[] = "/etc/cpsula/private/pkey";
-
-const char default_user[] = "gemini-data";
-const char default_group[] = "gemini-data";
-
-const uint16_t default_socket_port = 1965;
-
-const char default_root_directory[] = "/var/gemini";
-const char default_lua_main[] = "/var/gemini/main.lua";
-
-
-char * certificate_file;
-char * certificate_key_file;
-
-char * user;
-char * group;
-
-char * socket_address;
-uint16_t socket_port;
-
-char * root_directory;
-char * lua_main;
-
-
 void cfg_init(const char * file) {
   ssize_t line_size = 0;
   char * linebuf = NULL;
   size_t linebuf_size = 0;
 
   // Configure defaults
-  set_config_str(&certificate_file, default_certificate_file);
-  set_config_str(&certificate_key_file, default_certificate_key_file);
+  private_key_file = NULL;
+  certificate_file = NULL;
+  certificate_hostname = NULL;
 
   set_config_str(&user, default_user);
   set_config_str(&group, default_group);
 
-  socket_address = NULL;
-  socket_port = default_socket_port;
+  bind_address = NULL;
+  bind_port = default_bind_port;
 
   set_config_str(&root_directory, default_root_directory);
   set_config_str(&lua_main, default_lua_main);
@@ -82,63 +93,51 @@ void cfg_init(const char * file) {
   }
 
   while((line_size = getline(&linebuf, &linebuf_size, fp)) != -1) {
-    assert(line_size > 0);
-
     // XXX: Remove newline
+    assert(line_size > 0);
     linebuf[line_size - 1] = '\x00';
 
     const char * value;
-    if((value = parse_key_value(linebuf, "certificate-file"))) {
-      if(strlen(value) == 0) {
-        log_error("Invalid certificate file '%s'", value);
-        exit(1);
-      }
+    if((value = parse_key_value(linebuf, "private_key_file"))) {
+      set_config_str(&private_key_file, value);
+    }
+    if((value = parse_key_value(linebuf, "certificate_file"))) {
       set_config_str(&certificate_file, value);
     }
-    if((value = parse_key_value(linebuf, "certificate-key-file"))) {
-      if(strlen(value) == 0) {
-        log_error("Invalid certificate key file '%s'", value);
-        exit(1);
-      }
-      set_config_str(&certificate_key_file, value);
+    if((value = parse_key_value(linebuf, "certificate_hostname"))) {
+      set_config_str(&certificate_hostname, value);
     }
     if((value = parse_key_value(linebuf, "user"))) {
       if(strlen(value) == 0) {
-        log_error("Invalid user '%s'", value);
+        log_error("<user> may not be left blank");
         exit(1);
       }
       set_config_str(&user, value);
     }
     if((value = parse_key_value(linebuf, "group"))) {
       if(strlen(value) == 0) {
-        log_error("Invalid group '%s'", value);
+        log_error("<group> may not be left blank");
         exit(1);
       }
       set_config_str(&group, value);
     }
-    if((value = parse_key_value(linebuf, "socket-address"))) {
-      set_config_str(&socket_address, value);
+    if((value = parse_key_value(linebuf, "bind_address"))) {
+      set_config_str(&bind_address, value);
     }
-    if((value = parse_key_value(linebuf, "socket-port"))) {
+    if((value = parse_key_value(linebuf, "bind_port"))) {
       long int value_int = strtol(value, NULL, 10);
-      if(value_int < 0 || value_int > UINT16_MAX) {
-        log_error("Invalid port '%s'", value);
-        exit(1);
+      if(strlen(value) > 0) {
+        if(value_int <= 0 || value_int > UINT16_MAX) {
+          log_error("Invalid port '%s'", value);
+          exit(1);
+        }
+        bind_port = value_int;
       }
-      socket_port = value_int;
     }
-    if((value = parse_key_value(linebuf, "root-directory"))) {
-      if(strlen(value) == 0) {
-        log_error("Invalid root directory '%s'", value);
-        exit(1);
-      }
+    if((value = parse_key_value(linebuf, "root_directory"))) {
       set_config_str(&root_directory, value);
     }
-    if((value = parse_key_value(linebuf, "lua-main"))) {
-      if(strlen(value) == 0) {
-        log_error("Invalid lua main file '%s'", value);
-        exit(1);
-      }
+    if((value = parse_key_value(linebuf, "lua_main"))) {
       set_config_str(&lua_main, value);
     }
   }
@@ -152,11 +151,14 @@ void cfg_init(const char * file) {
 }
 
 void cfg_deinit(void) {
+  free(private_key_file);
+  private_key_file = NULL;
+
   free(certificate_file);
   certificate_file = NULL;
 
-  free(certificate_key_file);
-  certificate_key_file = NULL;
+  free(certificate_hostname);
+  certificate_hostname = NULL;
 
   free(user);
   user = NULL;
@@ -164,10 +166,10 @@ void cfg_deinit(void) {
   free(group);
   group = NULL;
 
-  free(socket_address);
-  socket_address = NULL;
+  free(bind_address);
+  bind_address = NULL;
 
-  socket_port = 0;
+  bind_port = 0;
 
   free(root_directory);
   root_directory = NULL;
@@ -176,12 +178,16 @@ void cfg_deinit(void) {
   lua_main = NULL;
 }
 
+const char * cfg_private_key_file(void) {
+  return private_key_file;
+}
+
 const char * cfg_certificate_file(void) {
   return certificate_file;
 }
 
-const char * cfg_certificate_key_file(void) {
-  return certificate_key_file;
+const char * cfg_certificate_hostname(void) {
+  return certificate_hostname;
 }
 
 const char * cfg_user(void) {
@@ -192,12 +198,12 @@ const char * cfg_group(void) {
   return group;
 }
 
-const char * cfg_socket_address(void) {
-  return socket_address;
+const char * cfg_bind_address(void) {
+  return bind_address;
 }
 
-uint16_t cfg_socket_port(void) {
-  return socket_port;
+uint16_t cfg_bind_port(void) {
+  return bind_port;
 }
 
 const char * cfg_root_directory(void) {

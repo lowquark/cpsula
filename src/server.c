@@ -492,8 +492,8 @@ void server_init(struct event_base * event_base, SSL_CTX * ssl_context) {
 
   luaenv_context_init(global_server_context->script_env, cfg_lua_main());
 
-  const char * hostname = cfg_socket_address();
-  uint16_t port = cfg_socket_port();
+  const char * hostname = cfg_bind_address();
+  uint16_t port = cfg_bind_port();
 
   if(open_socket(global_server_context, hostname, port)) {
     log_info("Server listening on %s:%hu", hostname ? hostname : "*", port);

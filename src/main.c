@@ -3,12 +3,9 @@
 #include <log.h>
 #include <server.h>
 #include <sigs.h>
-#include <ssl_init.h>
+#include <tls.h>
 
-#include <event2/util.h>
 #include <event2/event.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
 
 #include <assert.h>
 #include <string.h>
@@ -19,10 +16,6 @@
 #include <grp.h>
 
 int main(int argc, char ** argv) {
-  ERR_load_crypto_strings();
-  SSL_load_error_strings();
-  SSL_library_init();
-
   log_init(stderr);
 
   if(argc >= 2) {
@@ -31,7 +24,7 @@ int main(int argc, char ** argv) {
     cfg_init(CFG_MAIN_CONFIG_FILE);
   }
 
-  SSL_CTX * ssl_context = ssl_ctx_new();
+  SSL_CTX * ssl_context = tls_init();
 
   if(!ssl_context) {
     log_error("Failed to create SSL context\n");
@@ -92,8 +85,7 @@ int main(int argc, char ** argv) {
   event_base_free(base);
   base = NULL;
 
-  SSL_CTX_free(ssl_context);
-  ssl_context = NULL;
+  tls_deinit();
 
   cfg_deinit();
 
