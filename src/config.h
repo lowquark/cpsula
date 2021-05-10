@@ -47,4 +47,6 @@ const char * cfg_root_directory(void);
 // Never NULL
 const char * cfg_lua_main(void);
 
+const int cfg_lua_error_responses(void);
+
 #endif

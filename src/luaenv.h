@@ -9,6 +9,8 @@
 typedef struct luaenv_context luaenv_context;
 typedef struct luaenv_request luaenv_request;
 
+// TODO: Add LUAENV_REQUEST_FRESH status for better conditioning of
+// luaenv_request_execute/luaenv_request_continue
 #define LUAENV_REQUEST_DEAD      0
 #define LUAENV_REQUEST_SUSPENDED 1
 

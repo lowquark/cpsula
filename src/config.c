@@ -20,14 +20,17 @@ uint16_t bind_port;
 char * root_directory;
 char * lua_main;
 
+int lua_error_responses;
+
 // Configuration defaults
 const char default_user[] = "gemini-data";
 const char default_group[] = "gemini-data";
 
 const uint16_t default_bind_port = 1965;
 
-const char default_root_directory[] = "/var/gemini";
 const char default_lua_main[] = "main.lua";
+
+const int default_lua_error_responses = 0;
 
 static int is_whitespace(uint_fast32_t c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
@@ -80,8 +83,9 @@ void cfg_init(const char * file) {
   bind_address = NULL;
   bind_port = default_bind_port;
 
-  set_config_str(&root_directory, default_root_directory);
   set_config_str(&lua_main, default_lua_main);
+
+  lua_error_responses = default_lua_error_responses;
 
   // Overwrite based on config file
   log_info("Reading configuration from %s", file);
@@ -99,46 +103,91 @@ void cfg_init(const char * file) {
 
     const char * value;
     if((value = parse_key_value(linebuf, "private_key_file"))) {
+      if(strlen(value) == 0) {
+        log_error("<private_key_file> may not be null");
+        exit(1);
+      }
       set_config_str(&private_key_file, value);
     }
+
     if((value = parse_key_value(linebuf, "certificate_file"))) {
+      if(strlen(value) == 0) {
+        log_error("<certificate_file> may not be null");
+        exit(1);
+      }
       set_config_str(&certificate_file, value);
     }
+
     if((value = parse_key_value(linebuf, "certificate_hostname"))) {
+      if(strlen(value) == 0) {
+        log_error("<certificate_hostname> may not be null");
+        exit(1);
+      }
       set_config_str(&certificate_hostname, value);
     }
+
     if((value = parse_key_value(linebuf, "user"))) {
       if(strlen(value) == 0) {
-        log_error("<user> may not be left blank");
+        log_error("<user> may not be null");
         exit(1);
       }
       set_config_str(&user, value);
     }
+
     if((value = parse_key_value(linebuf, "group"))) {
       if(strlen(value) == 0) {
-        log_error("<group> may not be left blank");
+        log_error("<group> may not be null");
         exit(1);
       }
       set_config_str(&group, value);
     }
+
     if((value = parse_key_value(linebuf, "bind_address"))) {
       set_config_str(&bind_address, value);
     }
+
     if((value = parse_key_value(linebuf, "bind_port"))) {
-      long int value_int = strtol(value, NULL, 10);
-      if(strlen(value) > 0) {
-        if(value_int <= 0 || value_int > UINT16_MAX) {
-          log_error("Invalid port '%s'", value);
-          exit(1);
-        }
-        bind_port = value_int;
+      if(strlen(value) == 0) {
+        log_error("<bind_port> may not be null");
+        exit(1);
       }
+      long int value_int = strtol(value, NULL, 10);
+      if(value_int <= 0 || value_int > UINT16_MAX) {
+        log_error("Invalid value '%s' for <bind_port>", value);
+        exit(1);
+      }
+      bind_port = value_int;
     }
+
     if((value = parse_key_value(linebuf, "root_directory"))) {
+      if(strlen(value) == 0) {
+        log_error("<root_directory> may not be null");
+        exit(1);
+      }
       set_config_str(&root_directory, value);
     }
+
     if((value = parse_key_value(linebuf, "lua_main"))) {
+      if(strlen(value) == 0) {
+        log_error("<lua_main> may not be null");
+        exit(1);
+      }
       set_config_str(&lua_main, value);
+    }
+
+    if((value = parse_key_value(linebuf, "lua_error_responses"))) {
+      if(strlen(value) == 0) {
+        log_error("<lua_error_responses> may not be null");
+        exit(1);
+      }
+      if(strcmp(value, "true") == 0) {
+        lua_error_responses = 1;
+      } else if(strcmp(value, "false") == 0) {
+        lua_error_responses = 0;
+      } else {
+        log_error("Invalid value '%s' for <lua_error_responses>", value);
+        exit(1);
+      }
     }
   }
 
@@ -176,6 +225,8 @@ void cfg_deinit(void) {
 
   free(lua_main);
   lua_main = NULL;
+
+  lua_error_responses = 0;
 }
 
 const char * cfg_private_key_file(void) {
@@ -212,5 +263,9 @@ const char * cfg_root_directory(void) {
 
 const char * cfg_lua_main(void) {
   return lua_main;
+}
+
+const int cfg_lua_error_responses(void) {
+  return lua_error_responses;
 }
 
