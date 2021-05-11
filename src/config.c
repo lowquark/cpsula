@@ -6,197 +6,340 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Configuration values
+// Configuration values - Empty strings are NULL
+char * certificate_hostname;
 char * private_key_file;
 char * certificate_file;
-char * certificate_hostname;
 
 char * user;
 char * group;
 
 char * bind_address;
-uint16_t bind_port;
+long bind_port;
 
 char * root_directory;
 char * lua_main;
-
 int lua_error_responses;
 
-// Configuration defaults
-const char default_user[] = "gemini-data";
-const char default_group[] = "gemini-data";
+static void copy_str_realloc_noterm(char ** dst, const char * src_begin, const char * src_end) {
+  assert(dst);
+  assert(src_begin);
+  assert(src_end);
+  assert(src_end >= src_begin);
+  size_t size = src_end - src_begin;
+  *dst = (char *)realloc(*dst, size + 1);
+  memcpy(*dst, src_begin, size);
+  (*dst)[size] = '\x00';
+}
 
-const uint16_t default_bind_port = 1965;
+static void copy_str_realloc(char ** dst, const char * src) {
+  assert(dst);
+  assert(src);
+  size_t size = strlen(src);
+  *dst = (char *)realloc(*dst, size + 1);
+  memcpy(*dst, src, size);
+  (*dst)[size] = '\x00';
+}
 
-const char default_lua_main[] = "main.lua";
+static int set_boolean(int * value, const char * str) {
+  assert(value);
+  assert(str);
 
-const int default_lua_error_responses = 0;
+  if(strcmp(str, "true") == 0) {
+    *value = 1;
+    return 1;
+  } else if(strcmp(str, "false") == 0) {
+    *value = 0;
+    return 1;
+  } else {
+    return 0;
+  }
+}
 
-static int is_whitespace(uint_fast32_t c) {
+static int set_integer_minmax(long * value, const char * str, long min, long max) {
+  assert(value);
+  assert(str);
+
+  if(strlen(str) == 0) {
+    return 0;
+  }
+  if(str[0] != '-' && str[0] != '+' && !(str[0] >= '0' && str[0] <= '9')) {
+    return 0;
+  }
+  long int str_value = strtol(str, NULL, 10);
+  if(str_value < min || str_value > max) {
+    return 0;
+  }
+  *value = str_value;
+  return 1;
+}
+
+int set_string_nonnull(char ** str_inout, const char * src) {
+  assert(str_inout);
+  assert(src);
+
+  if(strlen(src) == 0) {
+    return 0;
+  }
+  copy_str_realloc(str_inout, src);
+  return 1;
+}
+
+int set_string(char ** str_inout, const char * src) {
+  assert(str_inout);
+  assert(src);
+
+  if(strlen(src) == 0) {
+    free(*str_inout);
+    *str_inout = NULL;
+  } else {
+    copy_str_realloc(str_inout, src);
+  }
+  return 1;
+}
+
+int set_certificate_hostname(const char * value) {
+  assert(value);
+  return set_string(&certificate_hostname, value);
+}
+
+int set_private_key_file(const char * value) {
+  assert(value);
+  return set_string(&private_key_file, value);
+}
+
+int set_certificate_file(const char * value) {
+  assert(value);
+  return set_string(&certificate_file, value);
+}
+
+int set_user(const char * value) {
+  assert(value);
+  return set_string_nonnull(&user, value);
+}
+
+int set_group(const char * value) {
+  assert(value);
+  return set_string_nonnull(&group, value);
+}
+
+int set_bind_address(const char * value) {
+  assert(value);
+  return set_string(&bind_address, value);
+}
+
+int set_bind_port(const char * value) {
+  assert(value);
+  return set_integer_minmax(&bind_port, value, 1, 65535);
+}
+
+int set_root_directory(const char * value) {
+  assert(value);
+  return set_string_nonnull(&root_directory, value);
+}
+
+int set_lua_main(const char * value) {
+  assert(value);
+  return set_string_nonnull(&lua_main, value);
+}
+
+int set_lua_error_responses(const char * value) {
+  assert(value);
+  return set_boolean(&lua_error_responses, value);
+}
+
+static void set_defaults() {
+  set_certificate_hostname("");
+  set_private_key_file("");
+  set_certificate_file("");
+
+  set_user("gemini-data");
+  set_group("gemini-data");
+
+  set_bind_address("");
+  set_bind_port("1965");
+
+  set_root_directory("/var/gemini");
+  set_lua_main("main.lua");
+  set_lua_error_responses("false");
+}
+
+static void set_key_value_or_die(const char * key, const char * value) {
+  int rval;
+
+  assert(key);
+  assert(value);
+
+  if(strcmp(key, "certificate_hostname") == 0) {
+    rval = set_certificate_hostname(value);
+  } else if(strcmp(key, "private_key_file") == 0) {
+    rval = set_private_key_file(value);
+  } else if(strcmp(key, "certificate_file") == 0) {
+    rval = set_certificate_file(value);
+  } else if(strcmp(key, "user") == 0) {
+    rval = set_user(value);
+  } else if(strcmp(key, "group") == 0) {
+    rval = set_group(value);
+  } else if(strcmp(key, "bind_address") == 0) {
+    rval = set_bind_address(value);
+  } else if(strcmp(key, "bind_port") == 0) {
+    rval = set_bind_port(value);
+  } else if(strcmp(key, "root_directory") == 0) {
+    rval = set_root_directory(value);
+  } else if(strcmp(key, "lua_main") == 0) {
+    rval = set_lua_main(value);
+  } else if(strcmp(key, "lua_error_responses") == 0) {
+    rval = set_lua_error_responses(value);
+  } else {
+    log_error("Unrecognized config value <%s>", key);
+    exit(1);
+  }
+
+  if(!rval) {
+    log_error("Invalid value '%s' for <%s>", value, key);
+    exit(1);
+  }
+}
+
+static int is_space(uint_fast32_t c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
 }
 
-static char * parse_key_value(const char * line, const char * key) {
-  char * colon_loc;
-  char * read_ptr;
+static int is_key_char(uint_fast32_t c) {
+  return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
 
-  if(strncmp(line, key, strlen(key)) == 0) {
-    colon_loc = strchr(line, ':');
-    if(colon_loc) {
-      for(read_ptr = colon_loc + 1 ; *read_ptr ; ++read_ptr) {
-        if(!is_whitespace(*read_ptr)) {
-          return read_ptr;
-        }
-      }
-      return read_ptr;
+#define PARSE_COMMENT     0
+#define PARSE_KEY         1
+#define PARSE_KEY_VALUE   2
+#define PARSE_ERR_SYNTAX -1
+
+static int parse_line(const char * line, char ** key_inout, char ** value_inout) {
+  assert(line);
+  assert(key_inout);
+  assert(value_inout);
+
+  const char * read_ptr = line;
+  const char * key_begin = NULL;
+  const char * key_end = NULL;
+  const char * value_begin = NULL;
+  const char * value_end = NULL;
+
+  while(is_space(*read_ptr)) {
+    ++read_ptr;
+  }
+
+  if(is_key_char(*read_ptr)) {
+    key_begin = read_ptr;
+    while(is_key_char(*read_ptr)) {
+      ++read_ptr;
     }
-  }
+    key_end = read_ptr;
 
-  return NULL;
-}
+    while(is_space(*read_ptr)) {
+      ++read_ptr;
+    }
 
-static void set_config_str(char ** var, const char * value) {
-  size_t size = strlen(value);
-  if(*var) { free(*var); }
-  if(size) {
-    *var = (char *)malloc(size + 1);
-    memcpy(*var, value, size);
-    (*var)[size] = '\x00';
+    if(*read_ptr == ':') {
+      ++read_ptr;
+
+      while(is_space(*read_ptr)) {
+        ++read_ptr;
+      }
+
+      if(*read_ptr) {
+        // Key read, value here too
+        value_begin = read_ptr;
+        while(*read_ptr && !is_space(*read_ptr)) {
+          ++read_ptr;
+        }
+        value_end = read_ptr;
+
+        while(is_space(*read_ptr)) {
+          ++read_ptr;
+        }
+
+        if(!*read_ptr) {
+          // End of line
+          copy_str_realloc_noterm(key_inout, key_begin, key_end);
+          copy_str_realloc_noterm(value_inout, value_begin, value_end);
+          return PARSE_KEY_VALUE;
+        } else {
+          // Garbage at end of line
+          return PARSE_ERR_SYNTAX;
+        }
+      } else {
+        // Key read, but no value
+        copy_str_realloc_noterm(key_inout, key_begin, key_end);
+        copy_str_realloc(value_inout, "");
+        return PARSE_KEY;
+      }
+    } else {
+      // Expected ':'
+      return PARSE_ERR_SYNTAX;
+    }
+  } else if(*read_ptr == '#') {
+    // Comment line
+    return PARSE_COMMENT;
+  } else if(!*read_ptr) {
+    // Whitespace or empty line
+    return PARSE_COMMENT;
   } else {
-    *var = NULL;
+    // Something invalid
+    return PARSE_ERR_SYNTAX;
   }
 }
 
-void cfg_init(const char * file) {
+static void set_from_file_or_die(const char * filename) {
   ssize_t line_size = 0;
   char * linebuf = NULL;
-  size_t linebuf_size = 0;
-
-  // Configure defaults
-  private_key_file = NULL;
-  certificate_file = NULL;
-  certificate_hostname = NULL;
-
-  set_config_str(&user, default_user);
-  set_config_str(&group, default_group);
-
-  bind_address = NULL;
-  bind_port = default_bind_port;
-
-  set_config_str(&lua_main, default_lua_main);
-
-  lua_error_responses = default_lua_error_responses;
+  size_t linebuf_size = 0; // TODO: Try to remove this
+  char * key = NULL;
+  char * value = NULL;
+  int line = 1;
 
   // Overwrite based on config file
-  log_info("Reading configuration from %s", file);
+  log_info("Reading configuration from %s", filename);
 
-  FILE * fp = fopen(file, "r");
+  FILE * fp = fopen(filename, "r");
   if(!fp) {
-    log_error("Failed to open %s for reading", file);
+    log_error("Failed to open %s for reading", filename);
     exit(1);
   }
 
   while((line_size = getline(&linebuf, &linebuf_size, fp)) != -1) {
-    // XXX: Remove newline
     assert(line_size > 0);
     linebuf[line_size - 1] = '\x00';
 
-    const char * value;
-    if((value = parse_key_value(linebuf, "private_key_file"))) {
-      if(strlen(value) == 0) {
-        log_error("<private_key_file> may not be null");
-        exit(1);
-      }
-      set_config_str(&private_key_file, value);
+    int rval = parse_line(linebuf, &key, &value);
+
+    if(rval == PARSE_KEY || rval == PARSE_KEY_VALUE) {
+      log_info("%s -> %s", key, value);
+      set_key_value_or_die(key, value);
+    } else if(rval == PARSE_ERR_SYNTAX) {
+      log_error("Error parsing %s: syntax error on line %d", filename, line);
+      exit(1);
     }
 
-    if((value = parse_key_value(linebuf, "certificate_file"))) {
-      if(strlen(value) == 0) {
-        log_error("<certificate_file> may not be null");
-        exit(1);
-      }
-      set_config_str(&certificate_file, value);
-    }
-
-    if((value = parse_key_value(linebuf, "certificate_hostname"))) {
-      if(strlen(value) == 0) {
-        log_error("<certificate_hostname> may not be null");
-        exit(1);
-      }
-      set_config_str(&certificate_hostname, value);
-    }
-
-    if((value = parse_key_value(linebuf, "user"))) {
-      if(strlen(value) == 0) {
-        log_error("<user> may not be null");
-        exit(1);
-      }
-      set_config_str(&user, value);
-    }
-
-    if((value = parse_key_value(linebuf, "group"))) {
-      if(strlen(value) == 0) {
-        log_error("<group> may not be null");
-        exit(1);
-      }
-      set_config_str(&group, value);
-    }
-
-    if((value = parse_key_value(linebuf, "bind_address"))) {
-      set_config_str(&bind_address, value);
-    }
-
-    if((value = parse_key_value(linebuf, "bind_port"))) {
-      if(strlen(value) == 0) {
-        log_error("<bind_port> may not be null");
-        exit(1);
-      }
-      long int value_int = strtol(value, NULL, 10);
-      if(value_int <= 0 || value_int > UINT16_MAX) {
-        log_error("Invalid value '%s' for <bind_port>", value);
-        exit(1);
-      }
-      bind_port = value_int;
-    }
-
-    if((value = parse_key_value(linebuf, "root_directory"))) {
-      if(strlen(value) == 0) {
-        log_error("<root_directory> may not be null");
-        exit(1);
-      }
-      set_config_str(&root_directory, value);
-    }
-
-    if((value = parse_key_value(linebuf, "lua_main"))) {
-      if(strlen(value) == 0) {
-        log_error("<lua_main> may not be null");
-        exit(1);
-      }
-      set_config_str(&lua_main, value);
-    }
-
-    if((value = parse_key_value(linebuf, "lua_error_responses"))) {
-      if(strlen(value) == 0) {
-        log_error("<lua_error_responses> may not be null");
-        exit(1);
-      }
-      if(strcmp(value, "true") == 0) {
-        lua_error_responses = 1;
-      } else if(strcmp(value, "false") == 0) {
-        lua_error_responses = 0;
-      } else {
-        log_error("Invalid value '%s' for <lua_error_responses>", value);
-        exit(1);
-      }
-    }
+    ++line;
   }
 
   free(linebuf);
   linebuf = NULL;
   linebuf_size = 0;
+  free(key);
+  key = NULL;
+  free(value);
+  value = NULL;
 
   fclose(fp);
   fp = NULL;
+}
+
+void cfg_init(const char * filename) {
+  set_defaults();
+
+  set_from_file_or_die(filename);
 }
 
 void cfg_deinit(void) {
@@ -229,16 +372,16 @@ void cfg_deinit(void) {
   lua_error_responses = 0;
 }
 
+const char * cfg_certificate_hostname(void) {
+  return certificate_hostname;
+}
+
 const char * cfg_private_key_file(void) {
   return private_key_file;
 }
 
 const char * cfg_certificate_file(void) {
   return certificate_file;
-}
-
-const char * cfg_certificate_hostname(void) {
-  return certificate_hostname;
 }
 
 const char * cfg_user(void) {
@@ -268,4 +411,15 @@ const char * cfg_lua_main(void) {
 const int cfg_lua_error_responses(void) {
   return lua_error_responses;
 }
+
+// TODO:
+#ifdef TEST
+
+int main(int argc, char ** argv) {
+  log_init(stderr);
+
+  return 0;
+}
+
+#endif
 

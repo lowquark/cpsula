@@ -5,15 +5,13 @@
 
 // Compiled configuration
 
-/*
 #ifndef CFG_ETC_DIRECTORY
-#define CFG_ETC_DIRECTORY "/etc/cpsula"
+#error CFG_ETC_DIRECTORY is undefined
 #endif
 
 #ifndef CFG_SHARE_DIRECTORY
-#define CFG_SHARE_DIRECTORY "/usr/share/cpsula"
+#error CFG_SHARE_DIRECTORY is undefined
 #endif
-*/
 
 #define CFG_MAIN_CONFIG_FILE (CFG_ETC_DIRECTORY "/cpsula.conf")
 #define CFG_SSL_DIRECTORY (CFG_SHARE_DIRECTORY "/ssl")
@@ -39,7 +37,7 @@ const char * cfg_group(void);
 
 // Possibly NULL
 const char * cfg_bind_address(void);
-// Never zero
+// 1-65535
 uint16_t cfg_bind_port(void);
 
 // Never NULL
@@ -47,6 +45,7 @@ const char * cfg_root_directory(void);
 // Never NULL
 const char * cfg_lua_main(void);
 
+// Boolean
 const int cfg_lua_error_responses(void);
 
 #endif

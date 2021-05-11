@@ -297,7 +297,8 @@ static int attain_credentials(EVP_PKEY ** pkey_out, X509 ** cert_out) {
     free(filepath);
     filepath = NULL;
   } else {
-    log_error("Neither <private_key_file> nor <certificate_hostname> specified in config");
+    pkey = NULL;
+    log_warning("Neither private key file nor certificate hostname specified by config");
   }
 
   if(pkey) {
@@ -309,7 +310,8 @@ static int attain_credentials(EVP_PKEY ** pkey_out, X509 ** cert_out) {
       free(filepath);
       filepath = NULL;
     } else {
-      log_warning("Neither <certificate_file> nor <certificate_hostname> specified in config");
+      cert = NULL;
+      log_warning("Neither certificate file nor certificate hostname specified by config");
     }
 
     if(cert) {
