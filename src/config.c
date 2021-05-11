@@ -415,8 +415,70 @@ const int cfg_lua_error_responses(void) {
 // TODO:
 #ifdef TEST
 
+struct cfg_test_case {
+  const char * line;
+  const char * key;
+  const char * value;
+  int return_value;
+};
+
+static const struct cfg_test_case cfg_test_cases[] = {
+  { "",                     NULL,          NULL,     PARSE_COMMENT    },
+  { "     ",                NULL,          NULL,     PARSE_COMMENT    },
+  { "\t",                   NULL,          NULL,     PARSE_COMMENT    },
+  { "#",                    NULL,          NULL,     PARSE_COMMENT    },
+  { " \r\t# bla :",         NULL,          NULL,     PARSE_COMMENT    },
+  { "test:",                "test",        "",       PARSE_KEY        },
+  { "test: ",               "test",        "",       PARSE_KEY        },
+  { " test: \t",            "test",        "",       PARSE_KEY        },
+  { "test: abcd",           "test",        "abcd",   PARSE_KEY_VALUE  },
+  { "test : abcd",          "test",        "abcd",   PARSE_KEY_VALUE  },
+  { " test\t : abcd",       "test",        "abcd",   PARSE_KEY_VALUE  },
+  { " test : abcd ",        "test",        "abcd",   PARSE_KEY_VALUE  },
+  { " asdf_asdf : $$$$ ",   "asdf_asdf",   "$$$$",   PARSE_KEY_VALUE  },
+  { "a:*",                  "a",           "*",      PARSE_KEY_VALUE  },
+  { "test",                 NULL,          NULL,     PARSE_ERR_SYNTAX },
+  { "test ",                NULL,          NULL,     PARSE_ERR_SYNTAX },
+  { " test ",               NULL,          NULL,     PARSE_ERR_SYNTAX },
+  { "test : abcd xyz",      NULL,          NULL,     PARSE_ERR_SYNTAX },
+  { " : : $$$$ ",           NULL,          NULL,     PARSE_ERR_SYNTAX },
+};
+
+void test_cfg_case(const struct cfg_test_case * test_case) {
+  char * key = NULL;
+  char * value = NULL;
+  int rval = parse_line(test_case->line, &key, &value);
+
+  fprintf(stderr, "%s\n", test_case->line);
+
+  assert(rval == test_case->return_value);
+
+  if(test_case->key) {
+    assert(key);
+    assert(strcmp(test_case->key, key) == 0);
+  } else {
+    assert(key == NULL);
+  }
+
+  if(test_case->value) {
+    assert(value);
+    assert(strcmp(test_case->value, value) == 0);
+  } else {
+    assert(value == NULL);
+  }
+
+  free(key);
+  key = NULL;
+  free(value);
+  value = NULL;
+}
+
 int main(int argc, char ** argv) {
   log_init(stderr);
+
+  for(unsigned int i = 0 ; i < sizeof(cfg_test_cases)/sizeof(*cfg_test_cases) ; ++i) {
+    test_cfg_case(cfg_test_cases + i);
+  }
 
   return 0;
 }
