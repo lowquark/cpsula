@@ -42,6 +42,6 @@ int luaenv_request_status(luaenv_request * handler);
 
 // Returns a pointer to an internal buffer containing the response data last produced during
 // luaenv_request_execute or luaenv_request_continue. Sets *length to the length of the response.
-const char * luaenv_request_result(luaenv_request * handler, size_t * length);
+const char * luaenv_request_result(const luaenv_request * handler, size_t * length);
 
 #endif
