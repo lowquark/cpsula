@@ -55,5 +55,5 @@ function streaming_request_handler(address, resource, fingerprint, expiry)
 end
 
 -- Use this request handler
-return nil
+return basic_request_handler
 
