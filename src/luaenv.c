@@ -36,6 +36,8 @@ struct luaenv_request {
   int result_ref;
 };
 
+static const char * err_header_42_lua_error = "42 Lua error\r\n";
+
 // Wrapper around lua_pcall for debug.traceback
 static int pcall_debug_traceback(lua_State * L, int narg, int nret) {
   int rval;
@@ -94,7 +96,7 @@ static int error_request_handler(lua_State * L) {
         "%s",
         lua_tostring(L, lua_upvalueindex(1)), 5);
   } else {
-    lua_pushliteral(L, "42 Internal server error\r\n");
+    lua_pushliteral(L, "42 Lua error\r\n");
   }
   return 1;
 }
@@ -428,4 +430,196 @@ const char * luaenv_request_result(const luaenv_request * req, size_t * length) 
 
   return NULL;
 }
+
+#ifdef TEST
+
+int cfg_lua_error_responses() {
+  return 0;
+}
+
+static const char * dummy_response = "dummy response";
+
+void test_request(const char * main_file) {
+  const char * data;
+  size_t data_size;
+  int rval;
+
+  fprintf(stderr, "\n #### test_request(\"%s\") ####\n", main_file);
+
+  luaenv_context * env = luaenv_context_new();
+
+  rval = luaenv_context_init(env, main_file);
+  assert(rval == 0);
+
+  // Create a request and execute
+  luaenv_request * req = luaenv_request_new(env);
+
+  luaenv_request_execute(req, "localhost", "/", NULL, 0);
+
+  // Should not yield
+  assert(luaenv_request_status(req) == LUAENV_REQUEST_DEAD);
+
+  // Should return the dummy response
+  data = luaenv_request_result(req, &data_size);
+  assert(data);
+  assert(data_size == strlen(dummy_response));
+  assert(strcmp(data, dummy_response) == 0);
+
+  // A continue should not cause problems
+  luaenv_request_continue(req);
+
+  luaenv_request_free(req);
+  req = NULL;
+  luaenv_context_free(env);
+  env = NULL;
+}
+
+void test_request_resume(const char * main_file) {
+  const char * data;
+  size_t data_size;
+  int rval;
+
+  fprintf(stderr, "\n #### test_request(\"%s\") ####\n", main_file);
+
+  luaenv_context * env = luaenv_context_new();
+
+  rval = luaenv_context_init(env, main_file);
+  assert(rval == 0);
+
+  // Create a request and execute
+  luaenv_request * req = luaenv_request_new(env);
+
+  luaenv_request_execute(req, "localhost", "/", NULL, 0);
+
+  // Should yield
+  assert(luaenv_request_status(req) == LUAENV_REQUEST_SUSPENDED);
+
+  // Should return the dummy response
+  data = luaenv_request_result(req, &data_size);
+  assert(data);
+  assert(data_size == strlen(dummy_response));
+  assert(strcmp(data, dummy_response) == 0);
+
+  // A continue should succeed
+  luaenv_request_continue(req);
+
+  // Should not yield
+  assert(luaenv_request_status(req) == LUAENV_REQUEST_DEAD);
+
+  // Should return the dummy response
+  data = luaenv_request_result(req, &data_size);
+  assert(data);
+  assert(data_size == strlen(dummy_response));
+  assert(strcmp(data, dummy_response) == 0);
+
+  // A continue should not cause problems
+  luaenv_request_continue(req);
+
+  luaenv_request_free(req);
+  req = NULL;
+  luaenv_context_free(env);
+  env = NULL;
+}
+
+void test_request_error(const char * main_file, int init_rval_expected) {
+  int rval;
+
+  fprintf(stderr, "\n #### test_request_error(\"%s\", %d) ####\n", main_file, init_rval_expected);
+
+  luaenv_context * env = luaenv_context_new();
+
+  rval = luaenv_context_init(env, main_file);
+  assert(rval == init_rval_expected);
+
+  // Create a request regardless of initialization error
+  luaenv_request * req = luaenv_request_new(env);
+
+  luaenv_request_execute(req, "localhost", "/", NULL, 0);
+
+  // Should not yield
+  assert(luaenv_request_status(req) == LUAENV_REQUEST_DEAD);
+
+  // Should return an error response that depends on cfg_lua_error_responses()
+  const char * data;
+  size_t data_size;
+  data = luaenv_request_result(req, &data_size);
+
+  assert(data);
+  assert(strcmp(data, err_header_42_lua_error) == 0);
+
+  luaenv_request_free(req);
+  req = NULL;
+  luaenv_context_free(env);
+  env = NULL;
+}
+
+void test_request_resume_error(const char * main_file) {
+  const char * data;
+  size_t data_size;
+  int rval;
+
+  fprintf(stderr, "\n #### test_request_resume_error(\"%s\") ####\n", main_file);
+
+  luaenv_context * env = luaenv_context_new();
+
+  rval = luaenv_context_init(env, main_file);
+  assert(rval == 0);
+
+  // Create a request and execute
+  luaenv_request * req = luaenv_request_new(env);
+
+  luaenv_request_execute(req, "localhost", "/", NULL, 0);
+
+  // Should yield
+  assert(luaenv_request_status(req) == LUAENV_REQUEST_SUSPENDED);
+
+  // Should return the dummy response
+  data = luaenv_request_result(req, &data_size);
+  assert(data);
+  assert(data_size == strlen(dummy_response));
+  assert(strcmp(data, dummy_response) == 0);
+
+  // Continue our (re)quest
+  luaenv_request_continue(req);
+
+  // Should not yield
+  assert(luaenv_request_status(req) == LUAENV_REQUEST_DEAD);
+
+  // Should not provide an error response
+  data = luaenv_request_result(req, &data_size);
+  assert(data == NULL);
+  assert(data_size == 0);
+
+  luaenv_request_free(req);
+  req = NULL;
+  luaenv_context_free(env);
+  env = NULL;
+}
+
+int main(int argc, char ** argv) {
+  log_init(stderr);
+
+  test_request("request.lua");
+  test_request_resume("request-resume.lua");
+
+  test_request_error("no-file.lua", 1);
+  test_request_error("syntax-error.lua", 1);
+  test_request_error("error-in-main.lua", 1);
+  test_request_error("handler-not-callable.lua", 0);
+  test_request_error("error-in-handler.lua", 0);
+  test_request_error("bad-return-value.lua", 0);
+
+  test_request_resume_error("error-in-resumed-handler.lua");
+  test_request_resume_error("bad-yield-value.lua");
+
+  fprintf(stderr, "\n #### No assertions tripped - tests passed successfully ####\n");
+
+  //test_multiple_requests();
+
+  // TODO: Watch ref values for memory leaks?
+
+  return 0;
+}
+
+#endif
 

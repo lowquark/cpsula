@@ -39,6 +39,10 @@ test/test_config: src/config.c src/log.c
 	@mkdir -p $(@D)
 	gcc $(SERVER_CFLAGS) -DTEST -o $@ $^
 
+test/test_luaenv: src/luaenv.c src/log.c
+	@mkdir -p $(@D)
+	gcc $(SERVER_CFLAGS) -DTEST -o $@ $^ -llua
+
 INSTALL_ROOT=./pkg
 .PHONY: install
 install:

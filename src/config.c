@@ -412,7 +412,6 @@ const int cfg_lua_error_responses(void) {
   return lua_error_responses;
 }
 
-// TODO:
 #ifdef TEST
 
 struct cfg_test_case {
@@ -479,6 +478,8 @@ int main(int argc, char ** argv) {
   for(unsigned int i = 0 ; i < sizeof(cfg_test_cases)/sizeof(*cfg_test_cases) ; ++i) {
     test_cfg_case(cfg_test_cases + i);
   }
+
+  // TODO: Test values of a dummy config file
 
   return 0;
 }
