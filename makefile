@@ -29,20 +29,6 @@ $(SERVER_TARGET): $(SERVER_OBJECTS)
 %.o: %.c
 	gcc $(SERVER_CFLAGS) -c -o $@ $^
 
-tests: test/test_iri_parser test/test_config
-
-test/test_iri_parser: src/iri_parser.c src/log.c
-	@mkdir -p $(@D)
-	gcc $(SERVER_CFLAGS) -DTEST -o $@ $^
-
-test/test_config: src/config.c src/log.c
-	@mkdir -p $(@D)
-	gcc $(SERVER_CFLAGS) -DTEST -o $@ $^
-
-test/test_luaenv: src/luaenv.c src/log.c
-	@mkdir -p $(@D)
-	gcc $(SERVER_CFLAGS) -DTEST -o $@ $^ -llua
-
 INSTALL_ROOT=./pkg
 .PHONY: install
 install:

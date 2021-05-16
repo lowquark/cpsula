@@ -438,6 +438,8 @@ const char * iri_parser_resource(const struct iri_parser * up) {
 
 #ifdef TEST
 
+#include <btest.h>
+
 struct iri_test_case {
   const char * iri;
   const char * address;
@@ -558,28 +560,20 @@ static const struct utf8_test_case utf8_test_cases[] = {
 };
 
 void test_iri_parser_case(const struct iri_test_case * test_case) {
-  struct iri_parser * parser;
-  int rval;
+  fprintf(stderr, "> test_iri_parser_case(\"%s\")\n", test_case->iri);
 
-  parser = iri_parser_new();
+  struct iri_parser * parser = iri_parser_new();
+  int rval = iri_parser_parse(parser, test_case->iri, strlen(test_case->iri));
 
-  log_info("%s", test_case->iri);
+  BTEST_INT_EQ(rval, test_case->return_value);
+  BTEST_STR_EQ(parser->address, test_case->address);
+  BTEST_STR_EQ(parser->resource, test_case->resource);
 
   rval = iri_parser_parse(parser, test_case->iri, strlen(test_case->iri));
 
-  assert(rval == test_case->return_value);
-
-  if(test_case->address) {
-    assert(parser->address && !strcmp(test_case->address, parser->address));
-  } else {
-    assert(!parser->address);
-  }
-
-  if(test_case->resource) {
-    assert(parser->resource && !strcmp(test_case->resource, parser->resource));
-  } else {
-    assert(!parser->resource);
-  }
+  BTEST_INT_EQ(rval, test_case->return_value);
+  BTEST_STR_EQ(parser->address, test_case->address);
+  BTEST_STR_EQ(parser->resource, test_case->resource);
 
   iri_parser_free(parser);
   parser = NULL;
@@ -591,32 +585,28 @@ void test_read_utf8_case(const struct utf8_test_case * test_case) {
                             (const char *)test_case->data,
                             (const char *)test_case->data + test_case->length);
 
-  fprintf(stderr, "[ ");
+  fprintf(stderr, "> test_read_utf8_case([ ");
   for(size_t i = 0 ; i < test_case->length ; ++i) {
     fprintf(stderr, "%02X ", test_case->data[i]);
   }
-  fprintf(stderr, "]\n");
+  fprintf(stderr, "])\n");
 
-  assert(rval == test_case->return_value);
-
-  if(rval) {
-    assert(codepoint == test_case->codepoint);
-  }
+  BTEST_INT_EQ(rval, test_case->return_value);
+  BTEST_UINT_EQ(codepoint, test_case->codepoint);
 }
 
 int main(int argc, char ** argv) {
   log_init(stderr);
 
-  for(unsigned int i = 0 ; i < sizeof(utf8_test_cases)/sizeof(*utf8_test_cases) ; ++i) {
-    test_read_utf8_case(utf8_test_cases + i);
-  }
-
   for(unsigned int i = 0 ; i < sizeof(iri_test_cases)/sizeof(*iri_test_cases) ; ++i) {
     test_iri_parser_case(iri_test_cases + i);
+  }
+
+  for(unsigned int i = 0 ; i < sizeof(utf8_test_cases)/sizeof(*utf8_test_cases) ; ++i) {
+    test_read_utf8_case(utf8_test_cases + i);
   }
 
   return 0;
 }
 
 #endif
-

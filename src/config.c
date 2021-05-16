@@ -414,6 +414,8 @@ const int cfg_lua_error_responses(void) {
 
 #ifdef TEST
 
+#include <btest.h>
+
 struct cfg_test_case {
   const char * line;
   const char * key;
@@ -444,27 +446,15 @@ static const struct cfg_test_case cfg_test_cases[] = {
 };
 
 void test_cfg_case(const struct cfg_test_case * test_case) {
+  fprintf(stderr, "> test_cfg_case(\"%s\")\n", test_case->line);
+
   char * key = NULL;
   char * value = NULL;
   int rval = parse_line(test_case->line, &key, &value);
 
-  fprintf(stderr, "%s\n", test_case->line);
-
-  assert(rval == test_case->return_value);
-
-  if(test_case->key) {
-    assert(key);
-    assert(strcmp(test_case->key, key) == 0);
-  } else {
-    assert(key == NULL);
-  }
-
-  if(test_case->value) {
-    assert(value);
-    assert(strcmp(test_case->value, value) == 0);
-  } else {
-    assert(value == NULL);
-  }
+  BTEST_INT_EQ(rval, test_case->return_value);
+  BTEST_STR_EQ(key, test_case->key);
+  BTEST_STR_EQ(value, test_case->value);
 
   free(key);
   key = NULL;
