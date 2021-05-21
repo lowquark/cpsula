@@ -96,7 +96,7 @@ static int error_request_handler(lua_State * L) {
         "%s",
         lua_tostring(L, lua_upvalueindex(1)), 5);
   } else {
-    lua_pushliteral(L, "42 Lua error\r\n");
+    lua_pushstring(L, err_header_42_lua_error);
   }
   return 1;
 }
@@ -149,7 +149,7 @@ static void resume_request_thread(struct luaenv_request * req,
               "Bad return value from request handler (expected string, function, or nil, got %s)",
               lua_typename(thread, return_type));
         } else {
-          lua_pushliteral(thread, "42 Lua error\r\n");
+          lua_pushstring(thread, err_header_42_lua_error);
         }
 
         // Error result
@@ -178,7 +178,7 @@ static void resume_request_thread(struct luaenv_request * req,
             "%s",
             lua_tostring(thread, -1));
       } else {
-        lua_pushliteral(thread, "42 Lua error\r\n");
+        lua_pushstring(thread, err_header_42_lua_error);
       }
 
       // Error result

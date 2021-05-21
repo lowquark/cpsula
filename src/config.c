@@ -314,7 +314,7 @@ static void set_from_file_or_die(const char * filename) {
     int rval = parse_line(linebuf, &key, &value);
 
     if(rval == PARSE_KEY || rval == PARSE_KEY_VALUE) {
-      log_info("%s -> %s", key, value);
+      //log_info("%s -> %s", key, value);
       set_key_value_or_die(key, value);
     } else if(rval == PARSE_ERR_SYNTAX) {
       log_error("Error parsing %s: syntax error on line %d", filename, line);
